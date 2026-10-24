@@ -65,6 +65,7 @@ class LiveClient:
                 "level": p.get("level", 0),
                 "mine": str(p.get("team", "")).lower() == my_team,
                 "is_me": p is me,
+                "position": p.get("position", ""),
                 "scores": p.get("scores") or {},
                 "items": pitems,
             })

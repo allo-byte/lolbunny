@@ -13,6 +13,7 @@ from . import patchdiff
 from . import trend
 from . import goldeff
 from . import hybrid
+from . import parity
 from . import itemrules
 from . import livemeta
 from . import profiles
@@ -526,6 +527,14 @@ class Advisor:
         except Exception as e:
             _log(f"[advisor] hybrid falló: {e!r}")
             state["hybrid_plan"] = None
+        try:
+            state["parity"] = None
+            if self.phase == "in_game" and live and live.get("players"):
+                state["parity"] = parity.plan(
+                    live, overview, me_prof, enemy_profs, burn._pick_rival(live))
+        except Exception as e:
+            _log(f"[advisor] parity falló: {e!r}")
+            state["parity"] = None
         try:
             state["first_buys"] = itemrules.first_buys(
                 overview.get("core_items"), me_prof, enemy_profs,

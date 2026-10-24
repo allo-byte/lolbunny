@@ -550,6 +550,32 @@ function burnBlock(b) {
   return `<div class="burnblock"><div class="sec-title">Daño por quemadura <span class="right">daño con el tiempo</span></div>${mine}${enemy}${cands}${ig}${notes}</div>`;
 }
 
+function parityBlock(p) {
+  if (!p || !p.available) return "";
+  const rv = p.rival || {};
+  const label = { delante: "VAS POR DELANTE", parejo: "ESTÁN PAREJOS", detras: "VAS POR DETRÁS" }[rv.verdict] || "";
+  const buy = p.buy;
+  const buyHtml = buy
+    ? `<div class="pa-buy"><div class="pa-buy-t">COMPRA ESTO</div>
+        <div class="pa-buy-row"><img src="${buy.icon}" alt=""><div>
+          <div class="pa-buy-n">${esc(buy.name)} <small>${buy.price}g</small></div>
+          <div class="pa-buy-w">${esc(buy.why)}</div>
+          <div class="pa-buy-s">${buy.missing > 0 ? `Te faltan <b>${buy.missing}g</b>` : "<b>Ya te alcanza el oro</b>"} · duelo ${rv.r.toFixed(2)} → <b>${buy.r_after.toFixed(2)}</b> (${buy.gain_pct >= 0 ? "+" : ""}${buy.gain_pct}%)</div>
+        </div></div></div>`
+    : `<div class="pa-buy none">Ningún objeto de tu lista mejora este duelo ahora mismo: sigue tu orden de compra.</div>`;
+  const alts = (p.alternatives || []).map((a) => `<span class="pa-alt" title="${esc(a.name)} · ${esc(a.why)}"><img src="${a.icon}" alt=""><small>${a.gain_pct >= 0 ? "+" : ""}${a.gain_pct}%</small></span>`).join("");
+  const others = (p.others || []).map((o) => `<span class="pa-o ${o.verdict}"><img src="${o.icon}" alt="">${esc(o.champion)} ${o.r.toFixed(2)}</span>`).join("");
+  return `<div class="parity ${rv.verdict}">
+    <div class="pa-head"><img src="${rv.icon}" alt=""><div><div class="pa-vs">Tú vs ${esc(rv.champion)}</div>
+      <div class="pa-state">${label} <span>(${rv.r.toFixed(2)}; 1.00 = igualados)</span></div></div></div>
+    <div class="pa-nums">Su build: <b>${(rv.gold || 0).toLocaleString("es-ES")}g</b> · Tu build: <b>${(p.me.gold || 0).toLocaleString("es-ES")}g</b> · Su armadura <b>${rv.armor}</b> / RM <b>${rv.mr}</b></div>
+    ${buyHtml}
+    ${alts ? `<div class="pa-alts">Otras opciones: ${alts}</div>` : ""}
+    ${others ? `<div class="pa-others">Los que más te ganan: ${others}</div>` : ""}
+    <div class="pa-note">${esc(p.note || "")}</div>
+  </div>`;
+}
+
 function hybridBlock(h) {
   if (!h || !h.available) return "";
   const r = h.resists || {};
@@ -669,7 +695,7 @@ function secBuild(st) {
   const altHtml = altBuildsBlock(items.alt_builds);
   const archHtml = archetypesBlock(items.archetypes);
   const earlyHtml = earlyRows([items.target].concat(full), "Versión early de cada objeto · cuándo completarlo");
-  return `<div class="sec-title">Build para ganar <span class="right">contra este rival</span></div>${patchWarningBlock(st.patch_warning)}${hybridBlock(st.hybrid_plan)}${lowGoldBlock(st.low_gold)}${firstBuysBlock(st.first_buys, items.stages)}${burnBlock(st.burn)}${counterPlanBlock(st.counter_plan)}${dvsHtml}${swapTip}${orderTip}${fullHtml}${earlyHtml}${stages}${altHtml}${archHtml}`;
+  return `<div class="sec-title">Build para ganar <span class="right">contra este rival</span></div>${parityBlock(st.parity)}${patchWarningBlock(st.patch_warning)}${hybridBlock(st.hybrid_plan)}${lowGoldBlock(st.low_gold)}${firstBuysBlock(st.first_buys, items.stages)}${burnBlock(st.burn)}${counterPlanBlock(st.counter_plan)}${dvsHtml}${swapTip}${orderTip}${fullHtml}${earlyHtml}${stages}${altHtml}${archHtml}`;
 }
 
 function secCounterCore(st) {

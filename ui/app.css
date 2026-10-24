@@ -995,3 +995,24 @@ body.remote .pw-row{font-size:14px}body.remote .pw-row img{width:38px;height:38p
 .hy-it{text-align:center}.hy-it img{width:34px;height:34px;border-radius:5px;display:block;margin:auto}
 .hy-it small{font-size:9px}.hy-it.ad small{color:#ff9b4a}.hy-it.ap small{color:#6bb7ff}.hy-it.hybrid small{color:#c79bff}
 body.remote .hybridblock{font-size:14px}body.remote .hy-it img{width:46px;height:46px}
+
+/* igualar al rival: bloque principal, grande y claro */
+.parity{margin:6px 0 12px;padding:12px;border-radius:10px;border:2px solid #888;background:rgba(255,255,255,.04);font-size:13px}
+.parity.delante{border-color:#3fcf7a}.parity.parejo{border-color:#f2c46b}.parity.detras{border-color:#ff5d5d}
+.pa-head{display:flex;gap:10px;align-items:center}.pa-head img{width:42px;height:42px;border-radius:50%}
+.pa-vs{font-size:12px;opacity:.75}.pa-state{font-size:18px;font-weight:800;letter-spacing:.3px}
+.pa-state span{font-size:11px;font-weight:500;opacity:.7}
+.parity.delante .pa-state{color:#3fcf7a}.parity.parejo .pa-state{color:#f2c46b}.parity.detras .pa-state{color:#ff7b7b}
+.pa-nums{margin-top:6px;font-size:11.5px;opacity:.85}
+.pa-buy{margin-top:10px;padding:10px;border-radius:8px;background:rgba(63,207,122,.12);border:1px solid #3fcf7a}
+.pa-buy.none{background:transparent;border-color:#666;font-size:12px;opacity:.85}
+.pa-buy-t{font-size:11px;font-weight:800;color:#3fcf7a;letter-spacing:1px}
+.pa-buy-row{display:flex;gap:10px;align-items:center;margin-top:4px}.pa-buy-row img{width:52px;height:52px;border-radius:8px}
+.pa-buy-n{font-size:16px;font-weight:800}.pa-buy-n small{font-size:12px;font-weight:500;opacity:.8}
+.pa-buy-w{font-size:12.5px;margin-top:2px}.pa-buy-s{font-size:11.5px;margin-top:3px;opacity:.85}
+.pa-alts,.pa-others{margin-top:8px;font-size:11.5px}
+.pa-alt{display:inline-block;text-align:center;margin-left:6px}.pa-alt img{width:30px;height:30px;border-radius:5px;display:block}
+.pa-o{display:inline-flex;align-items:center;gap:4px;margin-left:6px}.pa-o img{width:20px;height:20px;border-radius:50%}
+.pa-o.detras{color:#ff9b9b}.pa-o.delante{color:#7be09a}
+.pa-note{margin-top:8px;font-size:10px;opacity:.5}
+body.remote .parity{font-size:16px}body.remote .pa-state{font-size:22px}
