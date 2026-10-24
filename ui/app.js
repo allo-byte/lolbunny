@@ -580,25 +580,29 @@ function buildReviewBlock(p) {
   const rv = p && p.review;
   if (!rv || !(rv.items || []).length) return "";
   const rival = (p.rival && p.rival.champion) || "el rival";
+  const dp = rv.data_patch || {};
+  const patchTxt = dp.ugg || dp.ddragon ? `Datos del parche ${esc(dp.ugg || dp.ddragon)}${dp.stale ? " ⚠ (U.GG aún no tiene el vigente)" : " ✓ al día"}` : "";
+  const word = { perfecto: "✓ PERFECTO", deja: "= DEJA", cambia: "⇄ CAMBIA", construccion: "" };
   const rows = rv.items.map((r) => {
     if (r.status === "construccion") {
       return `<div class="br-row muted"><img src="${r.icon}" alt=""><div class="br-n">${esc(r.name)} <small>en construcción</small></div></div>`;
     }
     const val = r.value_pct != null ? `<small class="br-val">aporta ${r.value_pct >= 0 ? "+" : ""}${r.value_pct}% a tu duelo</small>` : "";
-    if (r.status === "perfecto") {
-      return `<div class="br-row ok"><img src="${r.icon}" alt=""><div class="br-n">${esc(r.name)} ${val}</div><div class="br-ok">✓ Perfecto</div></div>`;
+    const head = `<img src="${r.icon}" alt=""><div class="br-n">${esc(r.name)} ${val}</div><div class="br-tag ${r.status}">${word[r.status]}</div>`;
+    if (r.status === "perfecto" || !r.swap) {
+      return `<div class="br-row ${r.status}">${head}</div>`;
     }
     const s = r.swap;
-    return `<div class="br-row fix"><img src="${r.icon}" alt=""><div class="br-n">${esc(r.name)} ${val}</div>
-      <div class="br-swap"><span class="br-arrow">→ pon</span> <img src="${s.icon}" alt=""><div>
+    const lead = r.status === "cambia" ? "en vez de este pon" : "mejor opción posible (no compensa)";
+    return `<div class="br-row ${r.status}">${head}
+      <div class="br-swap"><span class="br-arrow">${lead}</span> <img src="${s.icon}" alt=""><div>
         <b>${esc(s.name)}</b> <span class="pa-kind ${esc(s.label || "")}">${esc(s.label || "")}</span>
         <div class="br-pct"><b>+${s.gain_main}%</b> vs ${esc(rival)} · <b>${s.gain_team >= 0 ? "+" : ""}${s.gain_team}%</b> vs el equipo</div>
         <div class="br-cost">${s.cost}g de diferencia${s.missing > 0 ? ` · te faltan ${s.missing}g` : " · ya te alcanza"}</div></div></div></div>`;
   }).join("");
-  const cls = rv.to_fix ? "fix" : "ok";
-  return `<div class="buildreview ${cls}"><div class="sec-title">Tu build ahora <span class="right">${rv.to_fix ? "ajustes sugeridos" : "perfecta"}</span></div>
-    <div class="br-sum">${esc(rv.summary)}</div>${rows}
-    <div class="br-note">Los % comparan tu duelo con y sin el cambio. El coste cuenta que vendes el objeto por el ${rv.sell_back}% de su precio.</div></div>`;
+  return `<div class="buildreview ${rv.verdict}"><div class="sec-title">TU BUILD EN VIVO <span class="right">se actualiza sola · ${patchTxt}</span></div>
+    <div class="br-sum ${rv.verdict}">${esc(rv.summary)}</div>${rows}
+    <div class="br-note">PERFECTO: nada lo mejora más de ${rv.thresholds.perfect_below}% · DEJA: mejora de ${rv.thresholds.perfect_below}% a ${rv.thresholds.change_from}% · CAMBIA: más de ${rv.thresholds.change_from}%. Los % comparan tu duelo con y sin el cambio; el coste cuenta que vendes el objeto por el ${rv.sell_back}% de su precio. Duelo simplificado: sin habilidades, runas ni posicionamiento.</div></div>`;
 }
 
 function hybridBlock(h) {

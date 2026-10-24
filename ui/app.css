@@ -1034,3 +1034,13 @@ body.remote .parity{font-size:16px}body.remote .pa-state{font-size:22px}
 .br-pct{margin-top:2px;color:#7be09a}.br-cost{font-size:10.5px;opacity:.7}
 .br-note{margin-top:8px;font-size:10px;opacity:.5}
 body.remote .buildreview{font-size:15px}
+
+/* tu build en vivo: tres veredictos */
+.buildreview.perfecto{border-color:#3fcf7a}.buildreview.deja{border-color:#f2c46b}.buildreview.cambia{border-color:#ff7b4a}
+.br-sum.perfecto{color:#3fcf7a}.br-sum.deja{color:#f2c46b}.br-sum.cambia{color:#ff9b6a}
+.br-sum{font-size:14px}
+.br-tag{font-weight:800;font-size:12px;padding:3px 9px;border-radius:12px;white-space:nowrap}
+.br-tag.perfecto{background:rgba(63,207,122,.18);color:#3fcf7a}
+.br-tag.deja{background:rgba(242,196,107,.18);color:#f2c46b}
+.br-tag.cambia{background:rgba(255,123,74,.2);color:#ff9b6a}
+.buildreview .sec-title .right{font-size:10px;font-weight:400;opacity:.7}

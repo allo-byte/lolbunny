@@ -277,6 +277,12 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
             break
     try:
         review = _review(me_champ, level, owned, duels, main, proven, gold_now)
+        if review is not None:
+            review["data_patch"] = {
+                "ddragon": ddragon.version,
+                "ugg": (overview or {}).get("patch"),
+                "stale": bool((overview or {}).get("patch_stale")),
+            }
     except Exception as e:  # la revisión nunca debe tirar el resto del plan
         print(f"[parity] review falló: {e!r}")
         review = None
@@ -319,7 +325,17 @@ def _why(me, rv, me_champ, level, owned, iid):
 # Revisión de tu build: ¿cada objeto que llevas es el mejor posible ahora?
 # ---------------------------------------------------------------------------
 SELL_BACK = 0.70           # regla del juego: los objetos se venden por el 70% de su precio
-PERFECT_BELOW = 2.0        # por debajo de esta mejora (%) se considera que el objeto está bien
+PERFECT_BELOW = 2.0        # mejora (%) por debajo de la cual el objeto es PERFECTO
+CHANGE_FROM = 6.0          # mejora (%) a partir de la cual conviene CAMBIAR (entre ambos: DEJA)
+
+
+def item_status(gain):
+    """perfecto / deja / cambia según cuánto mejoraría el mejor reemplazo (en %)."""
+    if gain < PERFECT_BELOW:
+        return "perfecto"
+    if gain < CHANGE_FROM:
+        return "deja"
+    return "cambia"
 _BOOTS = {"ver": None, "ids": []}
 
 
@@ -384,23 +400,34 @@ def _review(me_champ, level, owned, duels, main, proven, gold_now):
             _sc, c, r_main, r_avg = best
             gain_main = (r_main / base_main - 1) * 100
             gain_team = (r_avg / base_avg - 1) * 100
-            if max(gain_main, gain_team) >= PERFECT_BELOW and (gain_main + gain_team) > 0:
+            gain = max(gain_main, gain_team) if (gain_main + gain_team) > 0 else 0.0
+            status = item_status(gain)
+            if status != "perfecto":
                 ci = itemrules.item_info(c)
                 if ci:
                     cost = int(max((ci.get("price") or 0) - SELL_BACK * (row["price"]), 0))
                     row.update(
-                        status="cambia",
+                        status=status,
                         swap={"id": c, "name": ci["name"], "icon": ci["icon"], "price": ci.get("price") or 0,
                               "label": item_label(c), "proven": c in proven,
                               "gain_main": round(gain_main), "gain_team": round(gain_team),
                               "cost": cost, "missing": max(0, int(cost - gold_now))})
         rows.append(row)
     to_fix = [r for r in rows if r["status"] == "cambia"]
+    keep = [r for r in rows if r["status"] == "deja"]
+    if to_fix:
+        summary = f"CAMBIA {len(to_fix)} objeto(s): hay opciones claramente mejores contra lo que lleva el rival."
+    elif keep:
+        summary = "DEJA tu build: se podría mejorar un poco, pero no compensa el coste."
+    else:
+        summary = "PERFECTO: tu build ya es la mejor contra lo que lleva el rival."
     return {
         "items": rows,
         "to_fix": len(to_fix),
+        "keep": len(keep),
         "checked": len([r for r in rows if r["status"] != "construccion"]),
-        "summary": ("Tu build está bien: no hay cambios que valgan la pena ahora." if not to_fix
-                    else f"Ajusta {len(to_fix)} objeto(s): hay opciones mejores contra lo que lleva el rival."),
+        "summary": summary,
+        "verdict": "cambia" if to_fix else "deja" if keep else "perfecto",
+        "thresholds": {"perfect_below": PERFECT_BELOW, "change_from": CHANGE_FROM},
         "sell_back": int(SELL_BACK * 100),
     }

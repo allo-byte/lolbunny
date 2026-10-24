@@ -104,6 +104,20 @@ class Parity(unittest.TestCase):
         pen["pen_arm_flat"] = 25
         self.assertGreater(parity.damage_through(pen, rival), parity.damage_through(plain, rival))
 
+    def test_item_status_three_levels(self):
+        self.assertEqual(parity.item_status(0.5), "perfecto")
+        self.assertEqual(parity.item_status(3.0), "deja")
+        self.assertEqual(parity.item_status(6.0), "cambia")
+        self.assertEqual(parity.item_status(40), "cambia")
+
+    def test_review_has_verdict_and_patch(self):
+        rv = self._review(0.03, [4], [1, 1])
+        self.assertEqual(rv["verdict"], "cambia")
+        self.assertIn("CAMBIA", rv["summary"])
+        self.assertIn("data_patch", rv)
+        rv = self._review(0.03, [1], [])
+        self.assertEqual(rv["verdict"], "perfecto")
+
     def test_verdict_thresholds(self):
         self.assertEqual(parity._verdict(1.3), "delante")
         self.assertEqual(parity._verdict(1.0), "parejo")
