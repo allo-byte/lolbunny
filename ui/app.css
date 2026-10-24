@@ -1020,3 +1020,17 @@ body.remote .parity{font-size:16px}body.remote .pa-state{font-size:22px}
 .pa-kind{font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:#444;margin-left:4px;vertical-align:middle}
 .pa-kind.AD{background:#a8571f}.pa-kind.AP{background:#2f6fb5}.pa-kind.Defensa{background:#3a7a4a}
 .pa-kind.AD\+AP{background:#7a4fb5}
+
+/* tu build ahora */
+.buildreview{margin:6px 0 12px;padding:10px;border-radius:10px;border:1px solid #666;background:rgba(255,255,255,.03);font-size:12.5px}
+.buildreview.ok{border-color:#3fcf7a}.buildreview.fix{border-color:#f2c46b}
+.br-sum{font-weight:700;margin-bottom:6px}
+.br-row{display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid rgba(255,255,255,.08);flex-wrap:wrap}
+.br-row>img{width:34px;height:34px;border-radius:6px}.br-row.muted{opacity:.55}
+.br-n{flex:1;min-width:120px;font-weight:600}.br-val{display:block;font-weight:400;opacity:.65;font-size:10.5px}
+.br-ok{color:#3fcf7a;font-weight:800}
+.br-swap{display:flex;gap:8px;align-items:center;width:100%;margin-left:42px}
+.br-swap>img{width:34px;height:34px;border-radius:6px}.br-arrow{font-size:11px;opacity:.7}
+.br-pct{margin-top:2px;color:#7be09a}.br-cost{font-size:10.5px;opacity:.7}
+.br-note{margin-top:8px;font-size:10px;opacity:.5}
+body.remote .buildreview{font-size:15px}

@@ -576,6 +576,31 @@ function parityBlock(p) {
   </div>`;
 }
 
+function buildReviewBlock(p) {
+  const rv = p && p.review;
+  if (!rv || !(rv.items || []).length) return "";
+  const rival = (p.rival && p.rival.champion) || "el rival";
+  const rows = rv.items.map((r) => {
+    if (r.status === "construccion") {
+      return `<div class="br-row muted"><img src="${r.icon}" alt=""><div class="br-n">${esc(r.name)} <small>en construcción</small></div></div>`;
+    }
+    const val = r.value_pct != null ? `<small class="br-val">aporta ${r.value_pct >= 0 ? "+" : ""}${r.value_pct}% a tu duelo</small>` : "";
+    if (r.status === "perfecto") {
+      return `<div class="br-row ok"><img src="${r.icon}" alt=""><div class="br-n">${esc(r.name)} ${val}</div><div class="br-ok">✓ Perfecto</div></div>`;
+    }
+    const s = r.swap;
+    return `<div class="br-row fix"><img src="${r.icon}" alt=""><div class="br-n">${esc(r.name)} ${val}</div>
+      <div class="br-swap"><span class="br-arrow">→ pon</span> <img src="${s.icon}" alt=""><div>
+        <b>${esc(s.name)}</b> <span class="pa-kind ${esc(s.label || "")}">${esc(s.label || "")}</span>
+        <div class="br-pct"><b>+${s.gain_main}%</b> vs ${esc(rival)} · <b>${s.gain_team >= 0 ? "+" : ""}${s.gain_team}%</b> vs el equipo</div>
+        <div class="br-cost">${s.cost}g de diferencia${s.missing > 0 ? ` · te faltan ${s.missing}g` : " · ya te alcanza"}</div></div></div></div>`;
+  }).join("");
+  const cls = rv.to_fix ? "fix" : "ok";
+  return `<div class="buildreview ${cls}"><div class="sec-title">Tu build ahora <span class="right">${rv.to_fix ? "ajustes sugeridos" : "perfecta"}</span></div>
+    <div class="br-sum">${esc(rv.summary)}</div>${rows}
+    <div class="br-note">Los % comparan tu duelo con y sin el cambio. El coste cuenta que vendes el objeto por el ${rv.sell_back}% de su precio.</div></div>`;
+}
+
 function hybridBlock(h) {
   if (!h || !h.available) return "";
   const r = h.resists || {};
@@ -695,7 +720,7 @@ function secBuild(st) {
   const altHtml = altBuildsBlock(items.alt_builds);
   const archHtml = archetypesBlock(items.archetypes);
   const earlyHtml = earlyRows([items.target].concat(full), "Versión early de cada objeto · cuándo completarlo");
-  return `<div class="sec-title">Build para ganar <span class="right">contra este rival</span></div>${parityBlock(st.parity)}${patchWarningBlock(st.patch_warning)}${hybridBlock(st.hybrid_plan)}${lowGoldBlock(st.low_gold)}${firstBuysBlock(st.first_buys, items.stages)}${burnBlock(st.burn)}${counterPlanBlock(st.counter_plan)}${dvsHtml}${swapTip}${orderTip}${fullHtml}${earlyHtml}${stages}${altHtml}${archHtml}`;
+  return `<div class="sec-title">Build para ganar <span class="right">contra este rival</span></div>${parityBlock(st.parity)}${buildReviewBlock(st.parity)}${patchWarningBlock(st.patch_warning)}${hybridBlock(st.hybrid_plan)}${lowGoldBlock(st.low_gold)}${firstBuysBlock(st.first_buys, items.stages)}${burnBlock(st.burn)}${counterPlanBlock(st.counter_plan)}${dvsHtml}${swapTip}${orderTip}${fullHtml}${earlyHtml}${stages}${altHtml}${archHtml}`;
 }
 
 function secCounterCore(st) {

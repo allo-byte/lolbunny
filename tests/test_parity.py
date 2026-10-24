@@ -46,6 +46,37 @@ class Parity(unittest.TestCase):
         parity._MEMO.update(key=None, out=None)
         return parity.plan(live, {"core_items": [], "late_items": [[], [], []]}, {}, [], live["players"][0])
 
+    def _review(self, ratio, owned, rival_items):
+        self.ratio = ratio
+        champ = CH(600, 30, 30, 60)
+        ddragon.champs_by_name = {"me": champ, "foe": dict(champ, name="Foe", key="2")}
+        itemrules.is_boots = lambda i: False
+        itemrules.item_info = lambda i, source=None: {"id": int(i), "name": f"I{i}", "icon": "", "price": 3000}
+        ddragon.item_price = lambda i: 3000
+        live = {"champion": "Me", "level": 11, "items": owned, "gold": 100, "players": [
+            {"champion": "Foe", "mine": False, "level": 11, "items": rival_items}]}
+        parity._MEMO.update(key=None, out=None)
+        out = parity.plan(live, {"core_items": [], "late_items": [[], [], []]}, {}, [], live["players"][0])
+        return out["review"]
+
+    def test_review_flags_useless_item(self):
+        rv = self._review(0.03, [4], [1, 1])      # AD puro con un objeto de AP
+        row = rv["items"][0]
+        self.assertEqual(row["status"], "cambia")
+        self.assertGreater(row["swap"]["gain_main"], 0)
+        self.assertIn(row["swap"]["label"], ("AD", "Defensa"))
+        self.assertEqual(rv["to_fix"], 1)
+
+    def test_review_perfect_when_nothing_better(self):
+        rv = self._review(0.03, [1], [])
+        self.assertEqual(rv["items"][0]["status"], "perfecto")
+        self.assertEqual(rv["to_fix"], 0)
+
+    def test_review_cost_uses_sell_back(self):
+        rv = self._review(0.03, [4], [1, 1])
+        sw = rv["items"][0]["swap"]
+        self.assertEqual(sw["cost"], int(3000 - 0.7 * 3000))
+
     def test_hybrid_champion_gets_ap_or_hybrid_vs_armored_rival(self):
         out = self._best(0.5, [2, 2, 2])          # rival con mucha armadura y poca RM
         self.assertIn(out["buy"]["label"], ("AP", "AD+AP"))

@@ -57,3 +57,6 @@ La app puede bajar sola las versiones nuevas desde tu repositorio de GitHub. Pas
 
 ## Igualar al rival (`backend/parity.py`)
 En partida, compara tu duelo con cada rival usando SUS objetos reales y te dice qué comprar ahora para igualar o superarlo, revisando TODO el catálogo (AD, AP, híbridos AD+AP y defensa) y mostrando lo mejor de cada tipo (bloque verde "COMPRA ESTO", arriba del todo). Detalles en el docstring del módulo. Pruebas: `python tests/test_parity.py`.
+
+## Tu build ahora (revisión de cada objeto)
+Debajo de "COMPRA ESTO": cada objeto que llevas aparece como **✓ Perfecto** o **→ pon X (+N% vs el rival · +M% vs el equipo)**, con la diferencia de oro contando la venta al 70%. Si todo está en verde, tu build ya es la mejor contra lo que lleva el rival.

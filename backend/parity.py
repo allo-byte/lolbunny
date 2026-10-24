@@ -275,6 +275,11 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
             break
         if len(alts) >= 3:
             break
+    try:
+        review = _review(me_champ, level, owned, duels, main, proven, gold_now)
+    except Exception as e:  # la revisión nunca debe tirar el resto del plan
+        print(f"[parity] review falló: {e!r}")
+        review = None
     for d in duels:
         d.pop("_stats", None)
         d.pop("_pick", None)
@@ -287,6 +292,7 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
                "gold": me["gold"]},
         "buy": best,
         "alternatives": alts,
+        "review": review,
         "source": SOURCE,
         "note": ("Duelo simplificado con tus objetos y los del rival: sin habilidades, runas, "
                  "cooldowns ni posicionamiento. Sirve para elegir entre compras, no para predecir una pelea."),
@@ -307,3 +313,94 @@ def _why(me, rv, me_champ, level, owned, iid):
         if eh1 / eh0 - 1 >= 0.03:
             parts.append(f"aguantas {round((eh1 / eh0 - 1) * 100)}% más contra su daño")
     return " y ".join(parts) or "mejora tu duelo contra su build actual"
+
+
+# ---------------------------------------------------------------------------
+# Revisión de tu build: ¿cada objeto que llevas es el mejor posible ahora?
+# ---------------------------------------------------------------------------
+SELL_BACK = 0.70           # regla del juego: los objetos se venden por el 70% de su precio
+PERFECT_BELOW = 2.0        # por debajo de esta mejora (%) se considera que el objeto está bien
+_BOOTS = {"ver": None, "ids": []}
+
+
+def _boot_finals():
+    if _BOOTS["ver"] == ddragon.version and _BOOTS["ids"]:
+        return _BOOTS["ids"]
+    out = []
+    for sid, it in (ddragon.items or {}).items():
+        g = it.get("gold") or {}
+        if "Boots" not in set(it.get("tags") or []) or not g.get("purchasable") or it.get("into"):
+            continue
+        if (it.get("maps") or {}).get("11") is not True or int(g.get("total", 0)) < 800:
+            continue
+        if it.get("requiredChampion") or it.get("requiredAlly"):
+            continue
+        out.append(int(sid))
+    _BOOTS["ver"], _BOOTS["ids"] = ddragon.version, out
+    return out
+
+
+def _blend(me_stats, duels, main):
+    r_main = parity(me_stats, main["_stats"])
+    r_avg = sum(parity(me_stats, d["_stats"]) for d in duels) / len(duels)
+    return r_main, r_avg
+
+
+def _review(me_champ, level, owned, duels, main, proven, gold_now):
+    """Para cada objeto que llevas: ¿hay uno mejor para ESTA partida y cuánto mejora?"""
+    base_main, base_avg = _blend(unit_stats(me_champ, level, owned), duels, main)
+    base_main = max(base_main, 0.01)
+    base_avg = max(base_avg, 0.01)
+    finals, boots = _catalog_finals(), _boot_finals()
+    rows = []
+    for iid in owned:
+        it = ddragon.item(iid) or {}
+        info = itemrules.item_info(iid)
+        if not info:
+            continue
+        is_boot = "Boots" in set(it.get("tags") or [])
+        row = {"id": iid, "name": info["name"], "icon": info["icon"], "price": info.get("price") or 0,
+               "label": item_label(iid)}
+        if it.get("into") and not is_boot:
+            row.update(status="construccion", note="componente: aún se está construyendo")
+            rows.append(row)
+            continue
+        without = [i for i in owned if i != iid]
+        # cuánto aporta este objeto al duelo (quitarlo y comparar)
+        w_main, _w_avg = _blend(unit_stats(me_champ, level, without), duels, main)
+        row["value_pct"] = round((base_main / max(w_main, 0.01) - 1) * 100)
+        pool = boots if is_boot else finals
+        best = None
+        for c in pool:
+            if c == iid or c in owned:
+                continue
+            r_main, r_avg = _blend(unit_stats(me_champ, level, without + [c]), duels, main)
+            bonus = 1.03 if c in proven else 1.0
+            sc = (r_main / base_main + 0.5 * r_avg / base_avg) * bonus
+            if best is None or sc > best[0]:
+                best = (sc, c, r_main, r_avg)
+        row["status"] = "perfecto"
+        if best:
+            _sc, c, r_main, r_avg = best
+            gain_main = (r_main / base_main - 1) * 100
+            gain_team = (r_avg / base_avg - 1) * 100
+            if max(gain_main, gain_team) >= PERFECT_BELOW and (gain_main + gain_team) > 0:
+                ci = itemrules.item_info(c)
+                if ci:
+                    cost = int(max((ci.get("price") or 0) - SELL_BACK * (row["price"]), 0))
+                    row.update(
+                        status="cambia",
+                        swap={"id": c, "name": ci["name"], "icon": ci["icon"], "price": ci.get("price") or 0,
+                              "label": item_label(c), "proven": c in proven,
+                              "gain_main": round(gain_main), "gain_team": round(gain_team),
+                              "cost": cost, "missing": max(0, int(cost - gold_now))})
+        rows.append(row)
+    to_fix = [r for r in rows if r["status"] == "cambia"]
+    return {
+        "items": rows,
+        "to_fix": len(to_fix),
+        "checked": len([r for r in rows if r["status"] != "construccion"]),
+        "summary": ("Tu build está bien: no hay cambios que valgan la pena ahora." if not to_fix
+                    else f"Ajusta {len(to_fix)} objeto(s): hay opciones mejores contra lo que lleva el rival."),
+        "sell_back": int(SELL_BACK * 100),
+    }
