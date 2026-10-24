@@ -56,4 +56,4 @@ En modo demo: `python app.py --mock` o `python app.py --browser` (abre overlay e
 La app puede bajar sola las versiones nuevas desde tu repositorio de GitHub. Pasos en `ACTUALIZACIONES.md`.
 
 ## Igualar al rival (`backend/parity.py`)
-En partida, compara tu duelo con cada rival usando SUS objetos reales y te dice qué comprar ahora para igualar o superarlo (bloque verde "COMPRA ESTO", arriba del todo). Detalles en el docstring del módulo. Pruebas: `python tests/test_parity.py`.
+En partida, compara tu duelo con cada rival usando SUS objetos reales y te dice qué comprar ahora para igualar o superarlo, revisando TODO el catálogo (AD, AP, híbridos AD+AP y defensa) y mostrando lo mejor de cada tipo (bloque verde "COMPRA ESTO", arriba del todo). Detalles en el docstring del módulo. Pruebas: `python tests/test_parity.py`.

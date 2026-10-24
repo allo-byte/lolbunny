@@ -558,12 +558,12 @@ function parityBlock(p) {
   const buyHtml = buy
     ? `<div class="pa-buy"><div class="pa-buy-t">COMPRA ESTO</div>
         <div class="pa-buy-row"><img src="${buy.icon}" alt=""><div>
-          <div class="pa-buy-n">${esc(buy.name)} <small>${buy.price}g</small></div>
+          <div class="pa-buy-n">${esc(buy.name)} <small>${buy.price}g</small> <span class="pa-kind ${esc(buy.label || "")}">${esc(buy.label || "")}</span></div>
           <div class="pa-buy-w">${esc(buy.why)}</div>
           <div class="pa-buy-s">${buy.missing > 0 ? `Te faltan <b>${buy.missing}g</b>` : "<b>Ya te alcanza el oro</b>"} · duelo ${rv.r.toFixed(2)} → <b>${buy.r_after.toFixed(2)}</b> (${buy.gain_pct >= 0 ? "+" : ""}${buy.gain_pct}%)</div>
         </div></div></div>`
     : `<div class="pa-buy none">Ningún objeto de tu lista mejora este duelo ahora mismo: sigue tu orden de compra.</div>`;
-  const alts = (p.alternatives || []).map((a) => `<span class="pa-alt" title="${esc(a.name)} · ${esc(a.why)}"><img src="${a.icon}" alt=""><small>${a.gain_pct >= 0 ? "+" : ""}${a.gain_pct}%</small></span>`).join("");
+  const alts = (p.alternatives || []).map((a) => `<span class="pa-alt" title="${esc(a.name)} · ${esc(a.why)}"><img src="${a.icon}" alt=""><small>${esc(a.label || "")} ${a.gain_pct >= 0 ? "+" : ""}${a.gain_pct}%</small></span>`).join("");
   const others = (p.others || []).map((o) => `<span class="pa-o ${o.verdict}"><img src="${o.icon}" alt="">${esc(o.champion)} ${o.r.toFixed(2)}</span>`).join("");
   return `<div class="parity ${rv.verdict}">
     <div class="pa-head"><img src="${rv.icon}" alt=""><div><div class="pa-vs">Tú vs ${esc(rv.champion)}</div>
