@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>bunnylol · League of Legends</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/draft.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark">&#9876;</span>
+    <div>
+      <h1>bunnylol</h1>
+      <p class="sub">Runas y objetos para tu composición · datos reales, sin cifras inventadas</p>
+    </div>
+  </div>
+  <div class="top-right">
+    <span class="patch" id="patchBadge">cargando datos…</span>
+    <a class="link" href="/overlay">Overlay en vivo &#8599;</a>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2><span class="num">1</span> Tu partida</h2>
+    <div class="composer-grid">
+      <div>
+        <label class="lbl">Mi campeón</label>
+        <div class="slot me" id="meSlot" data-target="me" title="Elegir mi campeón">+</div>
+
+        <label class="lbl">Posición</label>
+        <div class="chips" id="roleChips"></div>
+        <p class="muted small" id="laneSuggest"></p>
+
+        <label class="lbl">Mi estilo de juego</label>
+        <div class="chips" id="styleChips"></div>
+
+        <div class="two">
+          <div>
+            <label class="lbl">Modo de juego</label>
+            <select id="modeSel"></select>
+          </div>
+          <div>
+            <label class="lbl">Rango de los datos</label>
+            <select id="rankSel"></select>
+          </div>
+          <div>
+            <label class="lbl">Región</label>
+            <select id="regionSel"></select>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label class="lbl">Aliados (4)</label>
+        <div class="slots ally" id="allySlots"></div>
+
+        <label class="lbl">Rivales (5) · usa la &#9733; para marcar tu contrincante de línea</label>
+        <div class="slots enemy" id="enemySlots"></div>
+        <p class="muted small" id="laneInfo">Sin contrincante de línea marcado.</p>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="btnAnalyze" disabled>Analizar partida</button>
+      <span class="status" id="status"></span>
+    </div>
+  </section>
+
+  <section id="results"></section>
+</main>
+
+<div class="modal hidden" id="picker">
+  <div class="picker-card">
+    <div class="picker-head">
+      <input id="pickerSearch" placeholder="Buscar campeón…" autocomplete="off">
+      <button class="btn small" id="pickerClose">Cerrar</button>
+    </div>
+    <div class="picker-grid" id="pickerGrid"></div>
+  </div>
+</div>
+
+<script src="/static/draft.js"></script>
+</body>
+</html>

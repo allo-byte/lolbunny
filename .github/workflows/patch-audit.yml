@@ -1,0 +1,47 @@
+name: Informe de parche
+
+# LoL saca parche los miércoles; Data Dragon puede tardar unas horas.
+# Se ejecuta miércoles noche, jueves y viernes (UTC) y también a mano desde la pestaña Actions.
+on:
+  schedule:
+    - cron: "0 23 * * 3"
+    - cron: "0 12 * * 4"
+    - cron: "0 12 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Generar informe
+        id: rep
+        run: |
+          python tools/patch_audit.py | tee out.txt
+          echo "attention=$(grep -o 'needs_attention=.*' out.txt | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "patch=$(python -c "import json;print(json.load(open('patch_report.json'))['cur'])")" >> "$GITHUB_OUTPUT"
+      - name: Abrir aviso si hay algo que revisar
+        if: steps.rep.outputs.attention == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PATCH: ${{ steps.rep.outputs.patch }}
+        run: |
+          title="Parche $PATCH: pasivas que revisar"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+          if [ -z "$existing" ]; then
+            gh issue create --title "$title" --body-file patch_report.md
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patch-report
+          path: |
+            patch_report.md
+            patch_report.json

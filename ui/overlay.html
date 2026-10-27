@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>bunnylol</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div id="app">
+  <header id="hdr">
+    <div class="hdr-left">
+      <span class="dot" id="statusDot"></span>
+      <span class="app-title">bunnylol</span>
+      <span class="mock-badge hidden" id="mockBadge">MOCK</span>
+    </div>
+    <div class="hdr-btns">
+      <button class="icon-btn" id="btnCT" title="Click-through (Ctrl+Shift+B)">◎</button>
+      <button class="icon-btn" id="btnBrowser" title="Abrir panel completo en el navegador">↗</button>
+      <button class="icon-btn" id="btnGear" title="Ajustes">⚙</button>
+      <button class="icon-btn" id="btnClose" title="Salir">✕</button>
+    </div>
+  </header>
+
+  <main id="main"></main>
+
+  <div id="settingsPanel" class="hidden">
+    <div class="settings-card" id="settingsCard">
+      <div class="settings-head">
+        <span>Ajustes</span>
+        <button class="icon-btn" id="btnSettingsClose">✕</button>
+      </div>
+
+      <label class="s-label">Rol</label>
+      <div class="chips" id="setRoleChips"></div>
+
+      <label class="s-label">Modo de juego</label>
+      <div class="chips" id="setModeChips">
+        <button class="chip" data-mode="ranked">Clasificatoria</button>
+        <button class="chip" data-mode="ranked_flex">Flex</button>
+        <button class="chip" data-mode="normal">Normal</button>
+        <button class="chip" data-mode="normal_blind">A ciegas</button>
+        <button class="chip" data-mode="aram">ARAM</button>
+      </div>
+
+      <label class="s-label">Modo poco oro</label>
+      <div class="chips" id="setLowGoldChips">
+        <button class="chip" data-lowgold="auto">Auto</button>
+        <button class="chip" data-lowgold="on">Siempre</button>
+        <button class="chip" data-lowgold="off">Nunca</button>
+      </div>
+
+      <label class="s-label">Región de los datos</label>
+      <select id="setRegion" class="s-select"></select>
+
+      <label class="s-label">Rango</label>
+      <select id="setRank" class="s-select">
+        <option value="10">Platino+</option>
+        <option value="17">Esmeralda+</option>
+        <option value="11">Diamante+</option>
+        <option value="8">Global (todos)</option>
+        <option value="5">Oro</option>
+        <option value="6">Plata</option>
+        <option value="7">Bronce</option>
+        <option value="12">Hierro</option>
+      </select>
+
+      <div class="s-note">
+        Las builds vienen de U.GG (winrate real de miles de partidas del rango elegido).
+        Sin API key, sin cuenta, actualizado por parche.
+      </div>
+
+      <label class="s-label">Dirección para el iPad</label>
+      <div id="setAccess" class="lan-box">Calculando…</div>
+      <div class="s-row">
+        <span class="s-row-label">Copiar la dirección del iPad</span>
+        <button class="combo-btn" id="btnCopyLan">Copiar</button>
+      </div>
+      <div class="s-row">
+        <span class="s-row-label">Abrir el analizador en este PC</span>
+        <button class="combo-btn" id="btnOpenLan">Abrir</button>
+      </div>
+
+      <label class="s-label">Comandos de teclado (globales)</label>
+      <div class="s-row">
+        <span class="s-row-label">Mostrar / ocultar overlay</span>
+        <button class="combo-btn" data-k="toggle_combo" id="kToggle"></button>
+      </div>
+      <div class="s-row">
+        <span class="s-row-label">Click-through</span>
+        <button class="combo-btn" data-k="ct_combo" id="kCT"></button>
+      </div>
+      <div class="s-row">
+        <span class="s-row-label">Salir de la app</span>
+        <button class="combo-btn" data-k="quit_combo" id="kQuit"></button>
+      </div>
+      <div class="s-note">
+        Púlsalos para grabarlos (Ctrl/Alt/Shift + tecla, p. ej. <b>Ctrl+Z</b>).
+        Funcionan en todo el sistema aunque estés jugando: si eliges uno muy usado,
+        dejará de funcionar en otros programas.
+      </div>
+
+      <div class="s-row">
+        <span class="s-row-label">Reabrir solo si se cae a media partida</span>
+        <input type="checkbox" id="setAutoRestart" class="s-check">
+      </div>
+      <div class="s-note">
+        Si se cae la ventana por un fallo estando en partida, se reabre sola.
+        Fuera de partida nunca se reabre por sí sola; y si la ocultas (<b>✕</b>/<b>Alt+F4</b>), tampoco.
+      </div>
+
+      <button class="s-btn" id="btnCTSettings">Alternar click-through</button>
+      <div class="s-note">Mientras esté activo, los clics atraviesan el overlay.</div>
+
+      <button class="s-btn danger" id="btnQuit">Salir de la app</button>
+      <div class="s-note">Cierra el overlay y el programa.</div>
+    </div>
+  </div>
+
+  <div id="ctBadge" class="hidden">click-through activo · Ctrl+Shift+B</div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
