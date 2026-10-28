@@ -41,5 +41,17 @@ class Prior(unittest.TestCase):
             builder._PRIOR = old
 
 
+class Merge(unittest.TestCase):
+    def test_junta_victorias_y_partidas_por_hueco(self):
+        a = [[(1, 60, 100), (2, 50, 100)], []]
+        b = [[(1, 30, 50), (3, 5, 10)], [(7, 1, 2)]]
+        m = prior.merge_blocks([a, b])
+        slot0 = {i: (w, n) for i, w, n in m[0]}
+        self.assertEqual(slot0[1], (90, 150))
+        self.assertEqual(slot0[2], (50, 100))
+        self.assertEqual(slot0[3], (5, 10))
+        self.assertEqual(m[1], [(7, 1, 2)])
+
+
 if __name__ == "__main__":
     unittest.main()

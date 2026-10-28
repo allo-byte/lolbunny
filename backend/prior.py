@@ -16,7 +16,7 @@ curas), pero no entran por ruido del modelo.
 
 import math
 
-LAMBDA = 4.0       # peso de los datos frente al modelo (ver tools/validate_builds.py --sweep)
+LAMBDA = 8.0       # peso de los datos frente al modelo; con 888 pares: 4 -> 74%/78%, 8 -> 76%/80% (meseta)
 UNLISTED = 0.10    # castigo a objetos fuera de los datos, en unidades de puntuación
 K = 150            # partidas "virtuales" del suavizado
 MIN_MATCHES = 100  # por debajo de esto una opción no cuenta como dato
@@ -65,3 +65,18 @@ def bonus(prior, iid, lam=None):
 
 def combo_bonus(prior, items, lam=None):
     return sum(bonus(prior, i, lam) for i in items)
+
+
+def merge_blocks(patches_blocks):
+    """Suma victorias y partidas de varios parches, hueco a hueco: [[(id,w,m)..]*3] por parche.
+
+    Más partidas = menos ruido, a costa de mezclar parches con cambios de equilibrio distintos."""
+    slots = {}
+    for blocks in patches_blocks:
+        for si, block in enumerate(blocks):
+            acc = slots.setdefault(si, {})
+            for i, w, m in block:
+                a = acc.setdefault(int(i), [0, 0])
+                a[0] += int(w)
+                a[1] += int(m)
+    return [[(i, w, m) for i, (w, m) in acc.items()] for _si, acc in sorted(slots.items())]

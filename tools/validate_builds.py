@@ -87,6 +87,8 @@ def main():
     ap.add_argument("--ugg", default=os.path.join(ROOT, "cache", "ugg"))
     ap.add_argument("--cat", default=os.path.join(ROOT, "cache", "ddragon"))
     ap.add_argument("--min", type=int, default=300, help="partidas mínimas por opción")
+    ap.add_argument("--pool", type=int, default=1,
+                    help="con --sweep: junta los N parches anteriores para el prior (1 = solo el anterior)")
     ap.add_argument("--sweep", action="store_true",
                     help="híbrido: suma los datos del parche ANTERIOR al modelo y prueba varios pesos")
     ap.add_argument("--sim", action="store_true", help="puntuar con el simulador de pelea (fightsim)")
@@ -136,16 +138,21 @@ def main():
         prev_prior = {}
         if a.sweep:
             m_ = re.search(r"ov_(\d+)_(\d+)_", os.path.basename(f))
-            pf = f.replace(f"ov_{m_.group(1)}_{m_.group(2)}_", f"ov_{m_.group(1)}_{int(m_.group(2)) - 1}_")
-            if os.path.exists(pf):
+            patch_blocks = []
+            for back in range(1, max(a.pool, 1) + 1):
+                pf = f.replace(f"ov_{m_.group(1)}_{m_.group(2)}_", f"ov_{m_.group(1)}_{int(m_.group(2)) - back}_")
+                if not os.path.exists(pf):
+                    continue
                 try:
                     pk = pick_overview(json.load(open(pf, encoding="utf8")))
                     if pk:
-                        prev_prior = prior.from_blocks([[(int(e[0]), int(e[1]), int(e[2])) for e in (blk or [])
-                                                         if isinstance(e, list) and len(e) > 2]
-                                                        for blk in (pk[2][5] or [])[:3]])
+                        patch_blocks.append([[(int(e[0]), int(e[1]), int(e[2])) for e in (blk or [])
+                                              if isinstance(e, list) and len(e) > 2]
+                                             for blk in (pk[2][5] or [])[:3]])
                 except Exception:
-                    prev_prior = {}
+                    pass
+            if patch_blocks:
+                prev_prior = prior.from_blocks(prior.merge_blocks(patch_blocks))
         for slot in range(min(3, len(late))):
             opts = []
             for e in (late[slot] or []):
@@ -187,7 +194,8 @@ def main():
         dm = [abs(p[0] - p[1]) for p in pairs]
         print(f"\nHíbrido (datos del parche anterior + modelo) · {len(pairs)} pares")
         print(f"|diferencia del modelo| mediana = {statistics.median(dm):.3f}")
-        print(f"{'LAMBDA':>7} {'todos':>12} {'claros (≥1pp)':>16}")
+        print(f"(datos de los {a.pool} parche(s) anterior(es) juntos; ± = margen de error al 95%, orientativo)")
+        print(f"{'LAMBDA':>7} {'todos':>18} {'claros (≥1pp)':>22}")
         for lam in (0, 1, 2, 4, 6, 8, 16, 1000):
             ok = n = okb = nb = 0
             for si, sj, zi, zj, d in pairs:
@@ -199,7 +207,8 @@ def main():
                 if abs(d) >= 0.01:
                     nb += 1
                     okb += hit
-            print(f"{lam:>7} {ok:>5}/{n:<4}{100*ok/n:>3.0f}% {okb:>7}/{nb:<4}{100*okb/max(nb,1):>3.0f}%")
+            ci = lambda k, t: 196 * (max(k / t, 1e-9) * (1 - k / t) / t) ** 0.5 if t else 0
+            print(f"{lam:>7} {ok:>5}/{n:<4}{100*ok/n:>3.0f}% ±{ci(ok, n):>2.0f} {okb:>7}/{nb:<4}{100*okb/max(nb,1):>3.0f}% ±{ci(okb, nb):>2.0f}")
     if total:
         print(f"\nPares donde el modelo prefiere el objeto que gana más: {agree}/{total} = {100*agree/total:.0f}%")
         if total_big:

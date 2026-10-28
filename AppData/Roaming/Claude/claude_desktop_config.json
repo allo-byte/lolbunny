@@ -1,0 +1,17 @@
+{
+  "preferences": {
+    "coworkWebSearchEnabled": true,
+    "remoteToolsDeviceName": "desktop-a8aroc0",
+    "coworkScheduledTasksEnabled": false,
+    "ccdScheduledTasksEnabled": false,
+    "bypassPermissionsGateByAccount": {
+      "8267cb68-5c8d-429e-b7bf-85c11add6983": false
+    },
+    "epitaxyPrefs": {
+      "starred-local-code-sessions": [],
+      "starred-cowork-spaces": [],
+      "starred-session-groups": []
+    }
+  },
+  "coworkUserFilesPath": "C:\\Users\\PC\\Claude"
+}
