@@ -78,6 +78,16 @@ class Pool(unittest.TestCase):
         self.assertEqual(slot0[11], (1000, 2000))
 
 
+class Decay(unittest.TestCase):
+    def test_decay_da_menos_peso_al_parche_viejo(self):
+        new = [[(1, 600, 1000)]]
+        old = [[(1, 400, 1000)]]
+        full = {i: (w, n) for i, w, n in prior.merge_blocks([new, old], 1.0)[0]}[1]
+        half = {i: (w, n) for i, w, n in prior.merge_blocks([new, old], 0.5)[0]}[1]
+        self.assertEqual(full, (1000, 2000))
+        self.assertEqual(half, (800, 1500))                # 600 + 0,5*400 ; 1000 + 0,5*1000
+
+
 class Merge(unittest.TestCase):
     def test_junta_victorias_y_partidas_por_hueco(self):
         a = [[(1, 60, 100), (2, 50, 100)], []]

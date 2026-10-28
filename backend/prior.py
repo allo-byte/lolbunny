@@ -77,13 +77,15 @@ def combo_bonus(prior, items, lam=None):
 def merge_blocks(patches_blocks, decay=1.0):
     """Suma victorias y partidas de varios parches, hueco a hueco: [[(id,w,m)..]*3] por parche.
 
-    Más partidas = menos ruido, a costa de mezclar parches con cambios de equilibrio distintos."""
+    Más partidas = menos ruido, a costa de mezclar parches con cambios de equilibrio distintos.
+    `decay` < 1 da menos peso a cada parche más viejo (el primero de la lista es el más reciente)."""
     slots = {}
-    for blocks in patches_blocks:
+    for age, blocks in enumerate(patches_blocks):
+        wt = decay ** age
         for si, block in enumerate(blocks):
             acc = slots.setdefault(si, {})
             for i, w, m in block:
-                a = acc.setdefault(int(i), [0, 0])
-                a[0] += int(w)
-                a[1] += int(m)
+                a = acc.setdefault(int(i), [0.0, 0.0])
+                a[0] += float(w) * wt
+                a[1] += float(m) * wt
     return [[(i, w, m) for i, (w, m) in acc.items()] for _si, acc in sorted(slots.items())]
