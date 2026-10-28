@@ -123,3 +123,9 @@ Incluye la reducción de armadura de Black Cleaver (6% por acumulación, hasta 5
 
 ### Medir con más datos (`tools/fetch_ugg.py`)
 `python tools/fetch_ugg.py` llena `cache/ugg` con los datos de U.GG de todos los campeones (parche actual + 3 anteriores; despacio a propósito, se puede interrumpir y repetir). Después `python tools/validate_builds.py --sweep` mide con cientos de pares y da el margen de error al 95%; `--pool 2` o `--pool 3` prueba a juntar varios parches anteriores para el prior (menos ruido, pero mezcla equilibrios distintos). Con 58 pares el margen de error es de ±12-16 puntos: por eso conviene medir antes de tocar pesos.
+
+### Prior con varios parches juntos
+`ugg._late_pool` junta las opciones de objetos tardíos del parche usado y de los 2 anteriores (solo del mismo rol; los parches viejos se cachean 7 días) y `prior.build` las usa. En la validación con 888 pares (~170 campeones), juntar 3 parches subió el acierto del orden de objetos de 70%/75% (un parche) a 76%/80% (peso 8). Cuesta 2 descargas extra por campeón (espaciadas y en segundo plano) la primera vez.
+
+### Afinar el prior
+`python tools/validate_builds.py --sweep --pool 3 --tune` prueba el suavizado (K = 50…1000 partidas virtuales) y dar menos peso a los parches más viejos (decay 1.0/0.7/0.5) y muestra el acierto de cada combinación con su número de pares. Defaults actuales: K = 150, sin decay (1.0).

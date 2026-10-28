@@ -56,7 +56,11 @@ class PatchSelection(unittest.TestCase):
         self.assertEqual(ov["patch"], "26.21")
         self.assertEqual(ov["core_items"], [3001, 3002, 3003])
         self.assertFalse(ov["patch_stale"])
-        self.assertEqual(c.calls, ["26_21"])  # ni siquiera pide el viejo
+        # los datos mostrados salen SOLO del parche nuevo (el primero que se pide); los anteriores
+        # se piden después y únicamente para juntarlos en el prior de objetos (late_pool)
+        self.assertEqual(c.calls[0], "26_21")
+        self.assertEqual(ov["core_items"], [3001, 3002, 3003])
+        self.assertIn("late_pool", ov)
 
     def test_falls_back_when_current_not_published(self):
         c = self.make_client({"26_20": fake_overview(5000, [1, 2, 3])})

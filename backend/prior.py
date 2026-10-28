@@ -27,17 +27,21 @@ def _logit(p):
     return math.log(p / (1 - p))
 
 
-def from_blocks(blocks):
-    """{id: z} desde bloques de opciones [(id, wins, matches), ...] (un bloque por hueco)."""
+def from_blocks(blocks, k=None):
+    """{id: z} desde bloques de opciones [(id, wins, matches), ...] (un bloque por hueco).
+
+    `k` = partidas virtuales del suavizado (por defecto K); admite victorias/partidas con decimales
+    (parches ponderados por antigüedad)."""
+    k = K if k is None else k
     out = {}
     for block in blocks:
-        opts = [(int(i), int(w), int(m)) for i, w, m in block if m and m >= MIN_MATCHES]
+        opts = [(int(i), float(w), float(m)) for i, w, m in block if m and m >= MIN_MATCHES]
         if len(opts) < 2:
             continue
         tot_w, tot_m = sum(o[1] for o in opts), sum(o[2] for o in opts)
         mean = tot_w / tot_m
         for iid, w, m in opts:
-            z = _logit((w + K * mean) / (m + K)) - _logit(mean)
+            z = _logit((w + k * mean) / (m + k)) - _logit(mean)
             # un objeto puede salir en varios huecos: se queda con la mejor lectura con más muestra
             if iid not in out or abs(z) > abs(out[iid]):
                 out[iid] = z
@@ -48,6 +52,9 @@ def build(overview):
     """Mapa {id: z} del overview de U.GG de la partida, o {} si no hay datos fiables."""
     if not overview:
         return {}
+    pool = overview.get("late_pool")
+    if pool:                                  # parche usado + anteriores, ya juntos (ugg._late_pool)
+        return from_blocks([[tuple(o) for o in blk] for blk in pool])
     blocks = []
     for block in overview.get("late_items") or []:
         blocks.append([(o["id"], o.get("wins") or 0, o.get("matches") or 0) for o in block or []])
@@ -67,7 +74,7 @@ def combo_bonus(prior, items, lam=None):
     return sum(bonus(prior, i, lam) for i in items)
 
 
-def merge_blocks(patches_blocks):
+def merge_blocks(patches_blocks, decay=1.0):
     """Suma victorias y partidas de varios parches, hueco a hueco: [[(id,w,m)..]*3] por parche.
 
     Más partidas = menos ruido, a costa de mezclar parches con cambios de equilibrio distintos."""

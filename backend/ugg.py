@@ -429,7 +429,57 @@ class UGGClient:
         parsed = self._parse_overview(overview, meta)
         if parsed and role_pref not in (role_data or {}):
             parsed["role_mismatch"] = True
+        if parsed:
+            try:
+                parsed["late_pool"] = self._late_pool(overview, meta, champ_key, mode_api, role_pref,
+                                                      rank_pref, region_pref)
+            except Exception as e:           # el prior mejora la recomendación, no debe romperla
+                print(f"[ugg] late_pool: {e}")
         return parsed
+
+    POOL_PATCHES = 3          # parche usado + anteriores que se juntan para el prior de objetos
+    POOL_AGE = 7 * 86400      # los parches viejos ya no cambian: no se vuelven a pedir cada 2 h
+
+    @staticmethod
+    def _late_blocks(ov):
+        """Opciones de objetos tardíos [[(id, victorias, partidas)] por hueco] de un overview crudo."""
+        if not isinstance(ov, list) or len(ov) < 6 or not isinstance(ov[5], list):
+            return None
+        return [[(int(e[0]), int(e[1]), int(e[2])) for e in (blk or []) if isinstance(e, list) and len(e) > 2]
+                for blk in ov[5][:3]]
+
+    def _late_pool(self, used_overview, meta, champ_key, mode_api, role_pref, rank_pref, region_pref):
+        """Junta las opciones de objetos tardíos del parche usado y de los anteriores.
+
+        En la validación (tools/validate_builds.py --sweep) juntar 3 parches subió el acierto del
+        orden de objetos de ~70% a ~76% frente a usar solo uno. Solo se juntan parches con el MISMO
+        rol (una build de top no vale para jungla)."""
+        pool = []
+        first = self._late_blocks(used_overview)
+        if first:
+            pool.append(first)
+        used = meta.get("patch")
+        cands = self._candidate_patches(self._meta_now())
+        older = cands[cands.index(used) + 1:] if used in cands else [p for p in cands if p != used]
+        for patch in older[: max(self.POOL_PATCHES - 1, 0)]:
+            url = f"{STATS_BASE}/overview/{patch}/{mode_api}/{champ_key}/{meta['overview_ver']}.json"
+            data = self._get_json(url, f"ov_{patch}_{mode_api}_{champ_key}.json", max_age=self.POOL_AGE, patch=patch)
+            if not data:
+                continue
+            role_data = self._pick_node(data, region_pref, rank_pref, role_pref)
+            if not role_data or role_pref not in role_data:
+                continue
+            entry = role_data[role_pref]
+            blocks = self._late_blocks(entry[0] if isinstance(entry, list) and entry else None)
+            if blocks:
+                pool.append(blocks)
+        return [[list(o) for o in blk] for blk in self._merge(pool)]
+
+    @staticmethod
+    def _merge(pool):
+        from . import prior as _prior
+
+        return _prior.merge_blocks(pool)
 
     # ------------------------------------------------------------------
     # Runas adaptativas: endpoint "builds" de U.GG.

@@ -41,6 +41,43 @@ class Prior(unittest.TestCase):
             builder._PRIOR = old
 
 
+class Pool(unittest.TestCase):
+    def test_build_usa_late_pool_si_existe(self):
+        ov = {"late_pool": [[[10, 600, 1000], [11, 450, 1000]]],
+              "late_items": [[{"id": 99, "wins": 1, "matches": 1000}, {"id": 98, "wins": 900, "matches": 1000}]]}
+        z = prior.build(ov)
+        self.assertIn(10, z)
+        self.assertNotIn(99, z)
+
+    def test_ugg_junta_parches_del_mismo_rol(self):
+        from backend.ugg import UGGClient
+
+        def ov(wins):
+            return [None] * 5 + [[[[10, wins, 1000], [11, 500, 1000]], [], []]] + [None]
+
+        files = {"16_21": {"12": {"10": {"4": [ov(600)]}}},
+                 "16_20": {"12": {"10": {"4": [ov(550)], "3": [ov(100)]}}},
+                 "16_19": {"12": {"10": {"3": [ov(100)]}}}}      # sin el rol pedido: se descarta
+
+        class Stub(UGGClient):
+            def __init__(self):
+                pass
+            def _meta_now(self):
+                return {"patch": "16_21", "overview_ver": "1.5.0", "fallbacks": ["16_20", "16_19"]}
+            def _candidate_patches(self, meta):
+                return ["16_21", "16_20", "16_19"]
+            def _get_json(self, url, cache_name, max_age=None, patch=None):
+                return files.get(patch)
+            def _pick_node(self, data, region_pref, rank_pref, role_pref=None):
+                return data["12"]["10"]
+
+        c = Stub()
+        pool = c._late_pool(ov(600), {"patch": "16_21", "overview_ver": "1.5.0"}, 1, "m", "4", "12", "10")
+        slot0 = {i: (w, n) for i, w, n in pool[0]}
+        self.assertEqual(slot0[10], (1150, 2000))       # 600 + 550, sin el parche 16_19
+        self.assertEqual(slot0[11], (1000, 2000))
+
+
 class Merge(unittest.TestCase):
     def test_junta_victorias_y_partidas_por_hueco(self):
         a = [[(1, 60, 100), (2, 50, 100)], []]

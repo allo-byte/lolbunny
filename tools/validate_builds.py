@@ -89,6 +89,8 @@ def main():
     ap.add_argument("--min", type=int, default=300, help="partidas mínimas por opción")
     ap.add_argument("--pool", type=int, default=1,
                     help="con --sweep: junta los N parches anteriores para el prior (1 = solo el anterior)")
+    ap.add_argument("--tune", action="store_true",
+                    help="prueba el suavizado (K) y el peso por antigüedad de los parches (con --sweep --pool 3)")
     ap.add_argument("--sweep", action="store_true",
                     help="híbrido: suma los datos del parche ANTERIOR al modelo y prueba varios pesos")
     ap.add_argument("--sim", action="store_true", help="puntuar con el simulador de pelea (fightsim)")
@@ -108,7 +110,7 @@ def main():
     files = sorted(glob.glob(os.path.join(a.ugg, f"ov_{patch}_ranked_solo_5x5_*.json")))
     if not files:
         files = sorted(glob.glob(os.path.join(a.ugg, "ov_*_ranked_solo_5x5_*.json")))
-    rows, pairs = [], []
+    rows, pairs, records = [], [], []
     agree = total = 0
     agree_big = total_big = 0
     for f in files:
@@ -153,6 +155,7 @@ def main():
                     pass
             if patch_blocks:
                 prev_prior = prior.from_blocks(prior.merge_blocks(patch_blocks))
+            cur_patch_blocks = patch_blocks
         for slot in range(min(3, len(late))):
             opts = []
             for e in (late[slot] or []):
@@ -167,6 +170,8 @@ def main():
             scorer = fightsim.score if a.sim else builder._score
             scores = [scorer("equilibrada", parity.unit_stats(champ, LEVEL, core + [iid]), enemies, w)
                       for iid, wr, m in opts]
+            if a.tune and a.sweep:
+                records.append(([(o[0], o[1]) for o in opts], scores, cur_patch_blocks, slot))
             for i in range(len(opts)):
                 for j in range(i + 1, len(opts)):
                     d_wr = opts[i][1] - opts[j][1]
@@ -209,6 +214,30 @@ def main():
                     okb += hit
             ci = lambda k, t: 196 * (max(k / t, 1e-9) * (1 - k / t) / t) ** 0.5 if t else 0
             print(f"{lam:>7} {ok:>5}/{n:<4}{100*ok/n:>3.0f}% ±{ci(ok, n):>2.0f} {okb:>7}/{nb:<4}{100*okb/max(nb,1):>3.0f}% ±{ci(okb, nb):>2.0f}")
+    if a.tune and records:
+        print("\nAfinado del prior (peso de datos 8; todos / claros):")
+        print(f"{'K':>6} {'decay':>6}   {'todos':>10} {'claros':>10}")
+        for k in (50, 150, 400, 1000):
+            for decay in (1.0, 0.7, 0.5):
+                ok = n = okb = nb = 0
+                for opts, scores, pblocks, slot in records:
+                    if not pblocks:
+                        continue
+                    z = prior.from_blocks(prior.merge_blocks(pblocks, decay), k=k)
+                    bon = [prior.bonus(z, iid, 8.0) for iid, _wr in opts]
+                    for i in range(len(opts)):
+                        for j in range(i + 1, len(opts)):
+                            d = opts[i][1] - opts[j][1]
+                            if abs(d) < 0.002:
+                                continue
+                            hit = ((scores[i] + bon[i]) - (scores[j] + bon[j])) * d > 0
+                            n += 1
+                            ok += hit
+                            if abs(d) >= 0.01:
+                                nb += 1
+                                okb += hit
+                if n:
+                    print(f"{k:>6} {decay:>6}   {100*ok/n:>7.1f}% {100*okb/max(nb,1):>8.1f}%  (n={n})")
     if total:
         print(f"\nPares donde el modelo prefiere el objeto que gana más: {agree}/{total} = {100*agree/total:.0f}%")
         if total_big:
