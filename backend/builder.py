@@ -27,7 +27,7 @@ posicionamiento. Compara builds entre sí; no predice una pelea concreta.
 
 import math
 
-from . import combat, effects, fightsim, itemrules, parity
+from . import combat, effects, fightsim, itemrules, parity, penetration, prior as ugg_prior
 from .ddragon import ddragon
 
 SLOTS = 6                 # huecos de objetos (las botas ocupan uno)
@@ -111,7 +111,8 @@ def _enemies(live, me_stats):
             continue
         lvl = int(p.get("level") or 1)
         st, items = project_enemy(ch, lvl, p.get("items") or [], me_stats)
-        out.append({"name": ch["name"], "stats": st, "items": items})
+        now = parity.unit_stats(ch, lvl, [int(i) for i in (p.get("items") or [])])   # lo que llevan YA
+        out.append({"name": ch["name"], "stats": st, "items": items, "now": now})
     return out
 
 
@@ -136,6 +137,26 @@ def _score(kind, me2, enemies, w):
     return sum(wi * (math.log(max(m, 1e-6)) - math.log(max(t, 1e-6))) for wi, m, t in zip(w, mine, theirs))
 
 
+def _pen_plan(model, base_items, enemies, owned_set):
+    try:
+        return penetration.analyze(model, base_items, enemies, owned_set)
+    except Exception as e:           # informativo: nunca debe romper la recomendación
+        return {"error": str(e)[:120]}
+
+
+def _data_backed(items):
+    """Cuántos objetos de la build tienen datos de U.GG y qué dicen (texto para la pantalla)."""
+    if not _PRIOR:
+        return None
+    rows = []
+    for i in items:
+        z = _PRIOR.get(int(i))
+        if z is not None:
+            rows.append((i, z))
+    good = sum(1 for _i, z in rows if z >= 0)
+    return {"listed": len(rows), "total": len(items), "above_average": good}
+
+
 def _sim_summary(me2, enemies):
     """Daño de una pelea de ~5 s con tu kit (habilidades reales de Meraki si las hay) contra cada rival."""
     try:
@@ -156,6 +177,13 @@ def _weighted_r(me2, enemies, w):
     return sum(wi * parity.parity(me2, e["stats"]) for wi, e in zip(w, enemies))
 
 
+_PRIOR = {}       # {id: z} de U.GG para el campeón de esta partida (lo fija search)
+
+
+def _bonus(items):
+    return ugg_prior.combo_bonus(_PRIOR, items)
+
+
 def _pool(model, base_items, enemies, w, owned_set):
     """Objetos candidatos: los mejores por objetivo + diversidad de tipos."""
     cands = [i for i in parity._catalog_finals()
@@ -163,7 +191,8 @@ def _pool(model, base_items, enemies, w, owned_set):
     scored = []
     for iid in cands:
         me2 = model.stats(base_items + [iid])
-        scored.append((iid, {k: _score(k, me2, enemies, w) for k in ("equilibrada", "ofensiva", "defensiva")}))
+        b = _bonus([iid])
+        scored.append((iid, {k: _score(k, me2, enemies, w) + b for k in ("equilibrada", "ofensiva", "defensiva")}))
     keep = set()
     for k, n in (("equilibrada", POOL_TOP), ("ofensiva", 14), ("defensiva", 14)):
         for iid, s in sorted(scored, key=lambda t: -t[1][k])[:n]:
@@ -193,7 +222,7 @@ def _search(kind, model, base_items, free, pool, enemies, w, constraint=None):
                 if key in nxt:
                     continue
                 me2 = model.stats(base_items + c2)
-                nxt[key] = (_score(kind, me2, enemies, w), c2)
+                nxt[key] = (_score(kind, me2, enemies, w) + _bonus(c2), c2)
         beam = sorted(nxt.values(), key=lambda t: -t[0])[:BEAM]
         if not beam:
             break
@@ -212,7 +241,7 @@ def _search(kind, model, base_items, free, pool, enemies, w, constraint=None):
                     c2 = combo[:pos] + [iid] + combo[pos + 1:]
                     if constraint(c2):
                         key = tuple(sorted(c2))
-                        fixed[key] = (_score(kind, model.stats(base_items + c2), enemies, w), c2)
+                        fixed[key] = (_score(kind, model.stats(base_items + c2), enemies, w) + _bonus(c2), c2)
         if fixed:
             return sorted(fixed.values(), key=lambda t: -t[0])[:BEAM]
     return beam
@@ -452,7 +481,7 @@ def _sticky_beam(kind, beam, model, base_items, free, enemies, w, score_kind, co
     if len(rem) != free or not cons(rem):
         return beam
     try:
-        sc = _score(score_kind, model.stats(base_items + rem), enemies, w)
+        sc = _score(score_kind, model.stats(base_items + rem), enemies, w) + _bonus(rem)
     except Exception:
         return beam
     if _MEM.get("locked") or sc >= beam[0][0] - STICKY_SCORE:
@@ -469,8 +498,10 @@ def _stable_order(kind, model, base_items, combo, score_kind, enemies, w):
     return _order(model, base_items, combo, score_kind, enemies, w)
 
 
-def search(live, model, level, owned, gold_now=0):
+def search(live, model, level, owned, gold_now=0, overview=None):
     """Varias builds completas óptimas contra el equipo rival, o None."""
+    global _PRIOR
+    _PRIOR = ugg_prior.build(overview)
     _mem_reset_if_new_game(model, live)
     sig = _enemy_sig(live)
     _MEM["locked"] = (_MEM["sig"] is not None and sig == _MEM["sig"])   # el rival no ha cambiado
@@ -551,6 +582,7 @@ def search(live, model, level, owned, gold_now=0):
             "cheap": cheap,
             "passive_notes": effects.explain_build(base_items + combo),
             "sim": _sim_summary(me_final, enemies),
+            "data_backed": _data_backed(base_items + combo),
         }
         seen[key] = bd
         builds.append(bd)
@@ -565,6 +597,7 @@ def search(live, model, level, owned, gold_now=0):
     return {
         "available": True, "builds": builds, "r_now": round(r_now, 2), "income": income, "low_gold": low,
         "heals": heals, "pool_size": len(pool),
+        "pen_plan": _pen_plan(model, base_items, enemies, owned_set),
         "catalog": len(parity._catalog_finals()),
         "enemies": [{"champion": e["name"], "projected": len(e["items"])} for e in enemies],
         "note": (f"Probé combinaciones de {len(pool)} objetos entre los {len(parity._catalog_finals())} "

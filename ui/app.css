@@ -1159,3 +1159,7 @@ body.remote .lb{font-size:15px}body.remote .lb-it{width:48px;height:48px}
 .mc-verdict.usa{color:#8fe3ad}.mc-verdict.vale{color:#f0d27a}.mc-verdict.no{color:#ff9d9d}
 .mc-eco{font-size:11px;margin-top:3px;opacity:.9}
 .mc-save{color:#8fe3ad}
+
+.pen-s{margin:8px 0 12px}.pen-t{font-weight:600}.pen-why{font-size:12px;opacity:.85;margin:4px 0}
+.pen-tb{border-collapse:collapse;font-size:12px;margin:6px 0;width:100%}.pen-tb th,.pen-tb td{padding:2px 6px;text-align:left;border-bottom:1px solid rgba(255,255,255,.08)}
+.pen-g{margin:4px 0;font-size:12px}.pen-i{display:inline-block;margin:2px 6px 2px 0;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,.08)}

@@ -125,7 +125,8 @@ def damage_through(att, dfn):
     """Daño por 'golpe completo' que el atacante hace al defensor, tras resistencias."""
     arm = combat.effective_resist(
         dfn["armor"], att["pen_arm_pct"],
-        combat.lethality_to_flat_pen(att["pen_arm_flat"], att["level"]))
+        combat.lethality_to_flat_pen(att["pen_arm_flat"], att["level"]),
+        pct_reduction=att.get("arm_shred", 0.0))
     mr = combat.effective_resist(dfn["mr"], att["pen_mr_pct"], att["pen_mr_flat"])
     # Velocidad de ataque total = base × (1 + bonus), con tope de 3.003 (wiki oficial).
     base_as = att.get("as_base", 0.625)
@@ -338,7 +339,7 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
     try:
         from . import builder
 
-        builds = builder.search(live, me_champ, level, owned, gold_now)
+        builds = builder.search(live, me_champ, level, owned, gold_now, overview)
     except Exception as e:  # el buscador nunca debe tirar el resto del plan
         print(f"[parity] builder falló: {e!r}")
         builds = None
@@ -598,6 +599,7 @@ class MeModel:
         for k in _ADDITIVE:
             out[k] = self.exact[k] + est[k] - self.cur_est[k]
         out["crit_mult"] = _num(self.exact.get("crit_mult")) + est.get("crit_mult", 1.75) - self.cur_est.get("crit_mult", 1.75)
+        out["arm_shred"] = est.get("arm_shred", 0.0)
         out["ah"] = _num(self.exact.get("ah")) + est.get("ah", 0.0) - self.cur_est.get("ah", 0.0)
         out["fx_items"] = est.get("fx_items")
         out["hp_base"] = est.get("hp_base", out.get("hp_base"))

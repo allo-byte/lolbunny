@@ -43,7 +43,8 @@ _MODELS = {}
 def damage(att, dfn, T=FIGHT_S, priority="QWE", detail=False):
     """Daño total de `att` sobre `dfn` en T segundos (tras resistencias). Devuelve un dict."""
     arm = combat.effective_resist(dfn["armor"], att["pen_arm_pct"],
-                                  combat.lethality_to_flat_pen(att["pen_arm_flat"], att["level"]))
+                                  combat.lethality_to_flat_pen(att["pen_arm_flat"], att["level"]),
+                                  pct_reduction=att.get("arm_shred", 0.0))
     mr = combat.effective_resist(dfn["mr"], att["pen_mr_pct"], att["pen_mr_flat"])
     m_phys, m_mag = combat.damage_multiplier(arm), combat.damage_multiplier(mr)
     thp = float(dfn["hp"])

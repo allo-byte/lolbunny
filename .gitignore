@@ -1,10 +1,9 @@
 cache/
 __pycache__/
 *.pyc
-muestra/
-muestra.zip
+
 AppData/
-Desktop/
 muestra/
 muestra.zip
 .git_viejo/
+__pycache__/

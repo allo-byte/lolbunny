@@ -20,7 +20,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from backend import builder, fightsim, parity, profiles  # noqa: E402
+from backend import builder, fightsim, parity, prior, profiles  # noqa: E402
 from backend.ddragon import ddragon  # noqa: E402
 
 ENEMY_TEAM = ["Darius", "Ahri", "Jinx", "Leona", "Lee Sin"]   # mezcla fija: tanque/bruiser/mago/ADC/jungla
@@ -87,6 +87,8 @@ def main():
     ap.add_argument("--ugg", default=os.path.join(ROOT, "cache", "ugg"))
     ap.add_argument("--cat", default=os.path.join(ROOT, "cache", "ddragon"))
     ap.add_argument("--min", type=int, default=300, help="partidas mínimas por opción")
+    ap.add_argument("--sweep", action="store_true",
+                    help="híbrido: suma los datos del parche ANTERIOR al modelo y prueba varios pesos")
     ap.add_argument("--sim", action="store_true", help="puntuar con el simulador de pelea (fightsim)")
     ap.add_argument("--no-effects", action="store_true", help="comparar contra el modelo anterior (sin pasivas)")
     a = ap.parse_args()
@@ -104,7 +106,7 @@ def main():
     files = sorted(glob.glob(os.path.join(a.ugg, f"ov_{patch}_ranked_solo_5x5_*.json")))
     if not files:
         files = sorted(glob.glob(os.path.join(a.ugg, "ov_*_ranked_solo_5x5_*.json")))
-    rows = []
+    rows, pairs = [], []
     agree = total = 0
     agree_big = total_big = 0
     for f in files:
@@ -131,6 +133,19 @@ def main():
                 enemies.append({"name": n, "stats": st, "items": items})
         w = builder._weights(base_me, enemies)
         finals = {int(x) for x in parity._catalog_finals()}
+        prev_prior = {}
+        if a.sweep:
+            m_ = re.search(r"ov_(\d+)_(\d+)_", os.path.basename(f))
+            pf = f.replace(f"ov_{m_.group(1)}_{m_.group(2)}_", f"ov_{m_.group(1)}_{int(m_.group(2)) - 1}_")
+            if os.path.exists(pf):
+                try:
+                    pk = pick_overview(json.load(open(pf, encoding="utf8")))
+                    if pk:
+                        prev_prior = prior.from_blocks([[(int(e[0]), int(e[1]), int(e[2])) for e in (blk or [])
+                                                         if isinstance(e, list) and len(e) > 2]
+                                                        for blk in (pk[2][5] or [])[:3]])
+                except Exception:
+                    prev_prior = {}
         for slot in range(min(3, len(late))):
             opts = []
             for e in (late[slot] or []):
@@ -148,6 +163,9 @@ def main():
             for i in range(len(opts)):
                 for j in range(i + 1, len(opts)):
                     d_wr = opts[i][1] - opts[j][1]
+                    if abs(d_wr) >= 0.002:
+                        zi, zj = prev_prior.get(opts[i][0]), prev_prior.get(opts[j][0])
+                        pairs.append((scores[i], scores[j], zi, zj, d_wr))
                     if abs(d_wr) < 0.002:          # empate práctico (<0,2 pp): no cuenta
                         continue
                     ok = (scores[i] - scores[j]) * d_wr > 0
@@ -164,6 +182,24 @@ def main():
     print(f"{'campeón':12} {'rol':>3} {'slot':>4}  {'objeto A':26} {'objeto B':26} {'WR A−B':>7}  modelo de acuerdo")
     for r in rows:
         print(f"{r[0]:12} {r[1]:>3} {r[2]:>4}  {r[3][:26]:26} {r[4][:26]:26} {r[5]:>+6.1f}  {r[6]}")
+    if a.sweep:
+        import statistics
+        dm = [abs(p[0] - p[1]) for p in pairs]
+        print(f"\nHíbrido (datos del parche anterior + modelo) · {len(pairs)} pares")
+        print(f"|diferencia del modelo| mediana = {statistics.median(dm):.3f}")
+        print(f"{'LAMBDA':>7} {'todos':>12} {'claros (≥1pp)':>16}")
+        for lam in (0, 1, 2, 4, 6, 8, 16, 1000):
+            ok = n = okb = nb = 0
+            for si, sj, zi, zj, d in pairs:
+                bi = prior.bonus({1: zi}, 1, lam) if zi is not None else -prior.UNLISTED
+                bj = prior.bonus({1: zj}, 1, lam) if zj is not None else -prior.UNLISTED
+                hit = ((si + bi) - (sj + bj)) * d > 0
+                n += 1
+                ok += hit
+                if abs(d) >= 0.01:
+                    nb += 1
+                    okb += hit
+            print(f"{lam:>7} {ok:>5}/{n:<4}{100*ok/n:>3.0f}% {okb:>7}/{nb:<4}{100*okb/max(nb,1):>3.0f}%")
     if total:
         print(f"\nPares donde el modelo prefiere el objeto que gana más: {agree}/{total} = {100*agree/total:.0f}%")
         if total_big:

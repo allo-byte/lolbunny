@@ -680,9 +680,34 @@ function buildsBlock(b) {
     <div class="bb-tabs">${tabs}</div>
     <div class="bb-blurb">${cur.verdict ? `<b class="mc-verdict ${esc(cur.rating || "")}">${esc(cur.verdict)}</b><br>` : ""}${esc(cur.blurb)}</div>
     <div class="bb-items">${its}</div>${cheap}
-    <div class="bb-sum">Paridad ${cur.r_now.toFixed(2)} → <b>${cur.r_final.toFixed(2)}</b> (${cur.gain_pct >= 0 ? "+" : ""}${cur.gain_pct}%) · ${cur.total_cost}g${cur.missing > 0 ? ` (faltan ${cur.missing}g)` : ""} · vida ${cur.hp} · arm ${cur.armor} · RM ${cur.mr}${cov ? `<br>Cubre: ${cov}` : ""}${cur.sim && cur.sim.vs && cur.sim.vs.length ? `<br><b>Pelea de ${cur.sim.seconds}s${cur.sim.source === "meraki" ? "" : " (kit genérico)"}:</b> ${cur.sim.vs.map((v) => `${esc(v.champion)} ${v.you_pct}% / ${v.they_pct}%`).join(" · ")}` : ""}${(cur.passive_notes || []).length ? `<br><b>Pasivas:</b> ${cur.passive_notes.map(esc).join(" · ")}` : ""}${b.heals ? `<br><b>Rival con robo de vida:</b> todas llevan corta curas.` : ""}</div>
-    <div class="bb-note">${esc(b.note || "")} Orden = compra primero lo que más rinde por oro. Cada % es lo que ese objeto sube la paridad dentro de la build.</div></details>`;
+    <div class="bb-sum">Paridad ${cur.r_now.toFixed(2)} → <b>${cur.r_final.toFixed(2)}</b> (${cur.gain_pct >= 0 ? "+" : ""}${cur.gain_pct}%) · ${cur.total_cost}g${cur.missing > 0 ? ` (faltan ${cur.missing}g)` : ""} · vida ${cur.hp} · arm ${cur.armor} · RM ${cur.mr}${cov ? `<br>Cubre: ${cov}` : ""}${cur.sim && cur.sim.vs && cur.sim.vs.length ? `<br><b>Pelea de ${cur.sim.seconds}s${cur.sim.source === "meraki" ? "" : " (kit genérico)"}:</b> ${cur.sim.vs.map((v) => `${esc(v.champion)} ${v.you_pct}% / ${v.they_pct}%`).join(" · ")}` : ""}${cur.data_backed ? `<br><b>Datos U.GG:</b> ${cur.data_backed.listed} de ${cur.data_backed.total} objetos con datos (${cur.data_backed.above_average} por encima de la media)` : ""}${(cur.passive_notes || []).length ? `<br><b>Pasivas:</b> ${cur.passive_notes.map(esc).join(" · ")}` : ""}${b.heals ? `<br><b>Rival con robo de vida:</b> todas llevan corta curas.` : ""}</div>
+    <div class="bb-note">${esc(b.note || "")} Orden = compra primero lo que más rinde por oro. Cada % es lo que ese objeto sube la paridad dentro de la build.</div></details>${penBlock(b.pen_plan)}`;
 }
+
+/* Qué penetración comprar según las resistencias de cada rival (backend/penetration.py). */
+function penBlock(pp) {
+  if (!pp || pp.error || !pp.enemies || !pp.enemies.length) return "";
+  const kindTxt = { pct: "PORCENTUAL", flat: "PLANA" };
+  const sec = (key, title, resKey) => {
+    const d = pp[key];
+    if (!d) return "";
+    const rows = d.per_enemy.map((e, i) => {
+      const r = pp.enemies[i];
+      const eff = resKey === "armor" ? [r.armor, r.armor_next] : [r.mr, r.mr_next];
+      return `<tr><td>${esc(e.champion)}</td><td>${eff[0]} → ${eff[1]}</td><td>${e.eff_now}% → <b>${e.eff_now_with}%</b></td><td>${e.eff_next}% → <b>${e.eff_next_with}%</b></td></tr>`;
+    }).join("");
+    const groups = d.groups.map((g) => `<div class="pen-g"><b>${esc(g.type)}</b>: ${g.items.map((it) =>
+      `<span class="pen-i" title="Solo por la penetración: +${it.pen_gain_now}% de daño hoy, +${it.pen_gain_next}% si el rival compra otro objeto defensivo. El objeto entero: +${it.item_gain}%">${esc(it.name)} <small>${esc(it.pen)} · +${it.pen_gain_now}%</small></span>`).join(" ")}</div>`).join("");
+    return `<div class="pen-s"><div class="pen-t">${title} (${d.share}% de tu daño): te conviene <b>${kindTxt[d.recommended]}</b></div>
+      <div class="pen-why">${esc(d.why)}</div>
+      <table class="pen-tb"><tr><th>Rival</th><th>${resKey === "armor" ? "Armadura" : "Res. mágica"} hoy → +1 objeto</th><th>Tu daño que llega (hoy)</th><th>(si compra otro)</th></tr>${rows}</table>${groups}</div>`;
+  };
+  const body = sec("physical", "Daño físico", "armor") + sec("magic", "Daño mágico", "mr");
+  if (!body) return "";
+  return `<details class="bb" data-keep="pen"><summary>Penetración que te conviene <small>(según sus resistencias actuales)</small></summary>${body}
+    <div class="bb-note">«+1 objeto» = lo que sube de media un buen objeto defensivo (+${pp.defensive_item_adds.armor} armadura, +${pp.defensive_item_adds.mr} RM); es una referencia, no una predicción. Compra la penetración ANTES de que lo hagan: el % de daño que llega baja con cada objeto defensivo, y la penetración porcentual lo compensa mejor.</div></details>`;
+}
+
 
 function hybridBlock(h) {
   if (!h || !h.available) return "";

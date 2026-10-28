@@ -107,3 +107,16 @@ Avisa también en `cache/app.log`. No modifica nada por su cuenta: informa.
 - `backend/fightsim.py`: daño de cada bando en 5 s (autoataques, habilidades, pasivas, resistencias y penetración). Si un campeón no tiene datos usa un kit genérico y lo indica. Cada build muestra «Pelea de 5s: rival % / % que te hace».
 - Límites: sin maná, movimiento, control de masas, escudos/curas, pasivas del campeón ni runas; objetivo único. Los datos de Meraki salen de la wiki y pueden ir un parche por detrás de Riot.
 - Pruebas: `python tests/test_fightsim.py`.
+
+## Híbrido: los datos de U.GG mandan, el modelo ajusta (`backend/prior.py`)
+Los winrates de objetos son muy estables entre parches (orden coincide en el 80% de los pares entre 16.20 y 16.21; 95% si la diferencia es clara). Mi modelo de estadísticas solo acierta ~55%. Por eso el buscador de builds suma a cada objeto un bono según su winrate (suavizado por tamaño de muestra) en los datos de U.GG del campeón, y el modelo de combate lo corrige con TU partida (rivales, curas, resistencias). Los objetos que U.GG no lista reciben un pequeño castigo, pero pueden ganarlo si la partida lo pide (p. ej. Thornmail contra curas).
+- Validación honesta (`python tools/validate_builds.py --sweep`): los datos del parche anterior se suman al modelo y se evalúa contra el parche actual. Con 58 pares de 10 campeones: solo modelo 55%/49% (todos/claros), híbrido con peso 4: 69%/74%, solo datos 67%/77%. El peso por defecto es `prior.LAMBDA = 4`. Repite el barrido cuando tengas más campeones en `cache/ugg`.
+- Con el selector de rango de la pantalla puedes elegir los rangos altos para que la base salga de los mejores jugadores (más ruido en campeones poco jugados).
+- Cada build indica cuántos de sus objetos tienen datos («Datos U.GG: 4 de 5...»).
+
+## Penetración que te conviene (`backend/penetration.py`)
+Compara tu daño con las resistencias REALES de cada rival (sus objetos actuales) y con un escenario «+1 objeto defensivo» (media de los mejores objetos de armadura/RM del catálogo). Muestra, para daño físico y mágico (según cómo reparte el suyo tu campeón):
+- armadura/RM de cada rival hoy → +1 objeto, y qué % de tu daño llega con y sin la mejor penetración de cada tipo;
+- veredicto plana (letalidad, pen. mágica plana) o porcentual (el cruce con armadura ≈ 51 con los valores actuales: por debajo gana la plana, por encima la porcentual);
+- los mejores objetos de cada tipo, con la ganancia de daño SOLO por su penetración (tu daño con el objeto frente a tu daño con el mismo objeto sin su penetración) y la del objeto entero.
+Incluye la reducción de armadura de Black Cleaver (6% por acumulación, hasta 5; se usa la media de una pelea de 5 s: 18%). Límites: Opportunity cuenta siempre aunque su letalidad exige 8 s sin combate; el «+1 objeto» es una referencia, no una predicción de lo que comprará el rival. Pruebas: `python tests/test_penetration.py`.

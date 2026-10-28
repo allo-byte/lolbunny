@@ -177,6 +177,7 @@ _RX_EXEC = re.compile(r"executes? champions[^.]*?below (\d+(?:\.\d+)?)% health",
 _RX_HP_TO_AD = re.compile(r"gain (\d+(?:\.\d+)?)% of your bonus health as attack damage", re.I)
 _RX_FIGHT_HP = re.compile(r"deals (\d+) plus (\d+(?:\.\d+)?)% of your max health as bonus physical damage", re.I)
 _RX_ABILITY_AMP = re.compile(r"increases your champion's ability and passive damage by (\d+(?:\.\d+)?)%[^.]*?stacks (\d+) times", re.I)
+_RX_SHRED = re.compile(r"reduces the target's armor by (\d+(?:\.\d+)?)% for [\d.]+ seconds\.?\s*\(stacks (\d+) times\)", re.I)
 _RX_GW = re.compile(r"(?:grievous wounds|(\d+)% wounds)", re.I)
 
 
@@ -221,6 +222,12 @@ def _parse_block(kind, name, body_html, price, stat_gold):
     if m:
         per, mx = float(m.group(1)) / 100.0, int(m.group(2))
         fx["numeric"]["amp_ability"] = per * sum(min(s + 1, mx) for s in range(int(FIGHT_S))) / max(int(FIGHT_S), 1)
+    m = _RX_SHRED.search(text)
+    if m:
+        per, mx = float(m.group(1)) / 100.0, int(m.group(2))
+        # un golpe por segundo: media de acumulaciones en la pelea modelada
+        avg = sum(min(s + 1, mx) for s in range(int(FIGHT_S))) / max(int(FIGHT_S), 1)
+        fx["numeric"]["armor_shred"] = per * avg
     m = _RX_EXEC.search(text)
     if m:
         fx["numeric"]["execute"] = float(m.group(1)) / 100.0
@@ -299,7 +306,7 @@ def compile_items(item_ids):
         "onhit_phys": 0.0, "onhit_magic": 0.0, "ability_phys": 0.0, "ability_magic": 0.0,
         "active_magic": 0.0, "active_phys": 0.0,
         "burn_max_hp": 0.0, "amp": 0.0, "amp_ability": 0.0, "giant": [], "execute": 0.0,
-        "bonus_hp_to_ad": 0.0, "fight_phys_flat": 0.0, "fight_phys_hp": 0.0,
+        "bonus_hp_to_ad": 0.0, "fight_phys_flat": 0.0, "fight_phys_hp": 0.0, "arm_shred": 0.0,
         "estimated": [], "tags": set(),
     }
     seen_unique = set()
@@ -334,6 +341,8 @@ def compile_items(item_ids):
             agg["burn_max_hp"] += n.get("burn_max_hp", 0.0)
             agg["amp"] += n.get("amp", 0.0)
             agg["amp_ability"] += n.get("amp_ability", 0.0)
+            if n.get("armor_shred"):
+                agg["arm_shred"] = 1.0 - (1.0 - agg["arm_shred"]) * (1.0 - n["armor_shred"])
             agg["bonus_hp_to_ad"] += n.get("bonus_hp_to_ad", 0.0)
             agg["fight_phys_flat"] += n.get("fight_phys_flat", 0.0)
             agg["fight_phys_hp"] += n.get("fight_phys_hp", 0.0)
@@ -377,6 +386,7 @@ def apply_stats(st, item_ids):
     st["crit_mult"] = st.get("crit_mult", 1.75) + fx["crit_dmg"]
     st["as_bonus"] += fx["as_bonus"]
     st["ah"] = fx["ah"]
+    st["arm_shred"] = fx["arm_shred"]
     if fx["ap_mult"]:
         st["ap"] *= 1.0 + fx["ap_mult"]       # Rabadon: se aplica sobre el AP total
     st["fx_items"] = tuple(str(i) for i in (item_ids or []))
@@ -470,6 +480,8 @@ def explain_build(item_ids):
         notes.append("penetración mágica: %s plana, %s%%" % (round(fx["pen_mr_flat"]), round(fx["pen_mr_pct"] * 100)))
     if fx["crit_dmg"]:
         notes.append(f"+{fx['crit_dmg']*100:.0f}% daño crítico")
+    if fx["arm_shred"]:
+        notes.append(f"reduce {fx['arm_shred']*100:.0f}% de la armadura rival (media en la pelea)")
     if fx["burn_max_hp"]:
         notes.append(f"quemadura: {fx['burn_max_hp']*100:.0f}% de la vida máx. por aplicación")
     if fx["amp"]:
