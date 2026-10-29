@@ -27,7 +27,7 @@ posicionamiento. Compara builds entre sí; no predice una pelea concreta.
 
 import math
 
-from . import combat, effects, fightsim, itemrules, parity, penetration, prior as ugg_prior
+from . import alerts as alerts_mod, combat, effects, fightsim, itemrules, parity, penetration, prior as ugg_prior
 from .ddragon import ddragon
 
 SLOTS = 6                 # huecos de objetos (las botas ocupan uno)
@@ -112,7 +112,8 @@ def _enemies(live, me_stats):
         lvl = int(p.get("level") or 1)
         st, items = project_enemy(ch, lvl, p.get("items") or [], me_stats)
         now = parity.unit_stats(ch, lvl, [int(i) for i in (p.get("items") or [])])   # lo que llevan YA
-        out.append({"name": ch["name"], "stats": st, "items": items, "now": now})
+        out.append({"name": ch["name"], "stats": st, "items": items, "now": now,
+                    "now_items": [int(i) for i in (p.get("items") or [])]})
     return out
 
 
@@ -135,6 +136,13 @@ def _score(kind, me2, enemies, w):
                    for wi, m, t in zip(w, mine, theirs))
     # equilibrada y mixta: paridad R media ponderada (log = ganar/perder simétrico)
     return sum(wi * (math.log(max(m, 1e-6)) - math.log(max(t, 1e-6))) for wi, m, t in zip(w, mine, theirs))
+
+
+def _alerts(model, base_items, enemies, owned_set, pen, gold=None):
+    try:
+        return alerts_mod.build(model, base_items, enemies, owned_set, pen, gold)
+    except Exception as e:           # informativo: nunca debe romper la recomendación
+        return [{"key": "error", "state": "info", "headline": "Marcas no disponibles", "detail": str(e)[:100], "items": []}]
 
 
 def _pen_plan(model, base_items, enemies, owned_set):
@@ -594,10 +602,12 @@ def search(live, model, level, owned, gold_now=0, overview=None):
     low = _low_gold(live)
     rate_builds(builds, ECO_SAVE_LOW if low else ECO_SAVE, low, _MEM.get("pick"))
     _MEM["pick"] = next((b["kind"] for b in builds if b.get("rating") == "usa"), None)
+    pen = _pen_plan(model, base_items, enemies, owned_set)
     return {
         "available": True, "builds": builds, "r_now": round(r_now, 2), "income": income, "low_gold": low,
         "heals": heals, "pool_size": len(pool),
-        "pen_plan": _pen_plan(model, base_items, enemies, owned_set),
+        "pen_plan": pen,
+        "alerts": _alerts(model, base_items, enemies, owned_set, pen, gold_now),
         "catalog": len(parity._catalog_finals()),
         "enemies": [{"champion": e["name"], "projected": len(e["items"])} for e in enemies],
         "note": (f"Probé combinaciones de {len(pool)} objetos entre los {len(parity._catalog_finals())} "

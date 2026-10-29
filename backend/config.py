@@ -31,7 +31,9 @@ DEFAULT_SETTINGS = {
     "toggle_combo": "ctrl+alt+b",
     "ct_combo": "ctrl+shift+b",
     "quit_combo": "ctrl+alt+q",
-    "auto_restart": True,
+    # Reinicio automático si la ventana deja de responder. Apagado por defecto y NUNCA en partida
+    # (ver app._restart_app): reiniciar encima del juego puede costar la partida.
+    "auto_restart": False,
     # Autoactualización desde tu GitHub (ver updater.py). Vacío = desactivado.
     "update_repo": "",
     "update_branch": "main",

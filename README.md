@@ -129,3 +129,16 @@ Incluye la reducción de armadura de Black Cleaver (6% por acumulación, hasta 5
 
 ### Afinar el prior
 `python tools/validate_builds.py --sweep --pool 3 --tune` prueba el suavizado (K = 50…1000 partidas virtuales) y dar menos peso a los parches más viejos (decay 1.0/0.7/0.5) y muestra el acierto de cada combinación con su número de pares. Defaults actuales: K = 150, sin decay (1.0).
+
+## No molestar en partida
+- Nunca se reinicia sola ni roba el foco mientras hay una partida abierta (`app._restart_app` y `app._activate_window(force=False)` comprueban `League of Legends.exe`). Solo se trae al frente cuando TÚ lo pides (atajo de mostrar/ocultar o quitar click-through).
+- `auto_restart` viene apagado por defecto (`backend/config.py`).
+- Si algo se abre solo, mira `cache/app.log`: líneas como «auto-reinicio por», «ya hay otra instancia abierta» o «activate: omitido» dicen qué lo provocó.
+
+## Marcas de compra: qué comprar y cuándo (`backend/alerts.py`)
+Arriba de las builds aparecen marcas con estado **AHORA** (rojo), **PRONTO** (ámbar), info (azul) u OK (verde), con el motivo, los objetos sugeridos, su precio y cuánto oro te falta. Reglas (umbrales en `alerts.py`):
+- **Penetración AHORA**: contra algún rival llega ≤ 70% de tu daño y la mejor penetración lo sube ≥ 8 puntos. **PRONTO**: hoy llega más, pero con un objeto defensivo más del rival bajaría a ≤ 70%. El tipo (porcentual o plana) sale de comparar ambas contra sus resistencias reales.
+- **Heridas graves AHORA**: un rival lleva ≥ 8% de robo de vida (objetos que lleva YA, no los proyectados) y tú no llevas nada que corte curas. No detecta curas propias del campeón (Soraka, Aatrox...).
+- **AD o AP**: si ≥ 70% de tu daño es de un tipo, ese; si eres híbrido, compara el mejor objeto de AD con el mejor de AP con tu modelo y decide si hay ≥ 15% de diferencia.
+- **Armadura o RM**: según qué parte del daño que te harán es física o mágica (≥ 65%).
+Se calcula con lo que los rivales llevan ahora; no predice lo que comprarán. Pruebas: `python tests/test_alerts.py`.

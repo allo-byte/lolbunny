@@ -676,12 +676,28 @@ function buildsBlock(b) {
     : "Con tu oro actual no te alcanza ni para un componente útil.";
   const cheap = parts ? `<div class="bb-cheap"><div class="bb-ct">Con poco oro: la misma build en componentes</div><div class="bb-parts">${parts}</div><div class="bb-now">${nowTxt}</div></div>` : "";
   const cov = (cur.covers || []).filter((c) => needTxt[c]).map((c) => needTxt[c]).join(" · ");
-  return `<details class="bb" data-keep="bb" ${bbOpen ? "open" : ""}><summary>Builds completas contra su equipo <small>(${list.length} opciones, de ${b.catalog} objetos)</small></summary>
+  return alertsBlock(b.alerts) + `<details class="bb" data-keep="bb" ${bbOpen ? "open" : ""}><summary>Builds completas contra su equipo <small>(${list.length} opciones, de ${b.catalog} objetos)</small></summary>
     <div class="bb-tabs">${tabs}</div>
     <div class="bb-blurb">${cur.verdict ? `<b class="mc-verdict ${esc(cur.rating || "")}">${esc(cur.verdict)}</b><br>` : ""}${esc(cur.blurb)}</div>
     <div class="bb-items">${its}</div>${cheap}
     <div class="bb-sum">Paridad ${cur.r_now.toFixed(2)} → <b>${cur.r_final.toFixed(2)}</b> (${cur.gain_pct >= 0 ? "+" : ""}${cur.gain_pct}%) · ${cur.total_cost}g${cur.missing > 0 ? ` (faltan ${cur.missing}g)` : ""} · vida ${cur.hp} · arm ${cur.armor} · RM ${cur.mr}${cov ? `<br>Cubre: ${cov}` : ""}${cur.sim && cur.sim.vs && cur.sim.vs.length ? `<br><b>Pelea de ${cur.sim.seconds}s${cur.sim.source === "meraki" ? "" : " (kit genérico)"}:</b> ${cur.sim.vs.map((v) => `${esc(v.champion)} ${v.you_pct}% / ${v.they_pct}%`).join(" · ")}` : ""}${cur.data_backed ? `<br><b>Datos U.GG:</b> ${cur.data_backed.listed} de ${cur.data_backed.total} objetos con datos (${cur.data_backed.above_average} por encima de la media)` : ""}${(cur.passive_notes || []).length ? `<br><b>Pasivas:</b> ${cur.passive_notes.map(esc).join(" · ")}` : ""}${b.heals ? `<br><b>Rival con robo de vida:</b> todas llevan corta curas.` : ""}</div>
     <div class="bb-note">${esc(b.note || "")} Orden = compra primero lo que más rinde por oro. Cada % es lo que ese objeto sube la paridad dentro de la build.</div></details>${penBlock(b.pen_plan)}`;
+}
+
+/* Marcas de compra (backend/alerts.py): QUÉ comprar y CUÁNDO, con el motivo. */
+function alertsBlock(list) {
+  if (!list || !list.length) return "";
+  const cls = { ahora: "al-now", pronto: "al-soon", info: "al-info", ok: "al-ok" };
+  const tag = { ahora: "AHORA", pronto: "PRONTO", info: "", ok: "✓" };
+  const rows = list.map((a) => {
+    const items = (a.items || []).map((i) => `<b>${esc(i.name)}</b>${i.price ? ` <small>${i.price} g</small>` : ""}`).join(" · ");
+    const gold = a.min_price != null
+      ? (a.missing_gold > 0 ? ` <small class="al-gold">te faltan ${a.missing_gold} g</small>` : ` <small class="al-gold">ya te alcanza</small>`)
+      : "";
+    return `<div class="al ${cls[a.state] || "al-info"}"><div class="al-h">${tag[a.state] ? `<span class="al-tag">${tag[a.state]}</span>` : ""}${esc(a.headline)}</div>
+      <div class="al-d">${esc(a.detail)}</div>${items ? `<div class="al-i">${items}${gold}</div>` : ""}</div>`;
+  }).join("");
+  return `<div class="alerts">${rows}</div>`;
 }
 
 /* Qué penetración comprar según las resistencias de cada rival (backend/penetration.py). */

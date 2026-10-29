@@ -132,7 +132,7 @@ def set_clickthrough(enabled):
         _apply_style(hwnd, enabled)
         _clickthrough = enabled
         if not enabled:
-            _activate_window()
+            _activate_window(force=True)      # lo has pedido tú (atajo o botón)
         return enabled
 
 
@@ -169,8 +169,8 @@ def toggle_overlay():
             if _clickthrough:
                 set_clickthrough(False)  # si no, el ratón lo atraviesa y no se puede mover
             _ensure_on_screen(win)
-            _activate_window()
-            threading.Timer(0.25, _activate_window).start()  # 2º intento: el juego puede robar el foco
+            _activate_window(force=True)
+            threading.Timer(0.25, lambda: _activate_window(force=True)).start()  # 2º intento: el juego puede robar el foco
         _user_closed[0] = False
         return _win_state["visible"]
     except Exception:
@@ -387,6 +387,10 @@ def _release_instance_mutex():
 def _restart_app(reason="desconocida"):
     if _relaunching[0]:
         return False
+    # Nunca durante una partida: el reinicio abre una ventana nueva encima del juego y te roba el foco.
+    if _is_mid_game() or _game_running():
+        _log("auto-reinicio CANCELADO (partida abierta): " + reason)
+        return False
     _relaunching[0] = True
     _log("auto-reinicio por: " + reason)
     try:
@@ -547,9 +551,38 @@ _user32.AttachThreadInput.argtypes = [ctypes.c_ulong, ctypes.c_ulong, wintypes.B
 _user32.AttachThreadInput.restype = wintypes.BOOL
 
 
-def _activate_window():
+_game_cache = [0.0, False]
+
+
+def _game_running():
+    """¿Está abierto el cliente de partida (League of Legends.exe)? Se consulta como máximo cada 2 s."""
+    now = time.time()
+    if now - _game_cache[0] < 2.0:
+        return _game_cache[1]
+    running = False
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq League of Legends.exe", "/NH"],
+            capture_output=True, text=True, timeout=3,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).stdout
+        running = "League of Legends.exe" in out
+    except Exception:
+        running = False
+    _game_cache[0], _game_cache[1] = now, running
+    return running
+
+
+def _activate_window(force=False):
     """Muestra la ventana y la trae al frente con foco, para poder usarla
-    al instante aunque estés jugando (sin tener que tabular)."""
+    al instante aunque estés jugando (sin tener que tabular).
+
+    `force=True` solo cuando TÚ lo pides (atajo de teclado). Las llamadas automáticas no roban el
+    foco mientras hay una partida abierta: una ventana que aparece sola encima del juego te
+    puede costar la partida."""
+    if not force and _game_running():
+        _log("activate: omitido (partida abierta y no lo pediste tú)")
+        return
     hwnd = _find_hwnd()
     if not hwnd:
         return
