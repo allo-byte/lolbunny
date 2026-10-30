@@ -165,7 +165,34 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/icon/"):
             self._serve_icon(path)
             return
+        if path == "/api/lanes":
+            try:
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                self._send(200, self._lanes(q))
+            except Exception as e:
+                self._send(500, {"ok": False, "error": str(e)})
+            return
         self._send(404, {"error": "not found"})
+
+    @staticmethod
+    def _lanes(q):
+        """Línea probable de cada campeón elegido en el draft (me, aliados, rivales)."""
+        from . import lanerival
+
+        def one(k):
+            k = (k or "").strip()
+            return (ddragon.champ_by_key(k) or ddragon.champ_by_name(k)) if k else None
+
+        def many(name):
+            raw = (q.get(name) or [""])[0]
+            return [one(x) for x in raw.split(",")] if raw else []
+
+        settings = config.load_settings()
+        settings["mode_api"] = MODES.get(settings.get("mode", "ranked"), MODES["ranked"])[1]
+        res = lanerival.draft_lanes(one((q.get("me") or [""])[0]), many("allies"), many("enemies"),
+                                    settings, (q.get("role") or [""])[0])
+        res["ok"] = True
+        return res
 
     @staticmethod
     def _lane(name):

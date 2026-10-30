@@ -413,3 +413,13 @@ details summary .why { display: inline; margin-left: 6px; }
 .cc-body { min-width: 0; flex: 1; }
 .cc-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
 .cc-body .why { margin: 2px 0 0; }
+
+/* Línea que juega cada campeón */
+.slot { position: relative; }
+.slot .lane-badge {
+  position: absolute; left: 3px; top: 3px; z-index: 2;
+  font-size: 10px; font-weight: 800; line-height: 1;
+  padding: 2px 5px; border-radius: 4px;
+  background: rgba(10,14,20,.85); color: #9cc8ff; border: 1px solid rgba(120,180,255,.45);
+  pointer-events: none;
+}

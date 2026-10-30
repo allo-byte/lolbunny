@@ -73,7 +73,7 @@ for /f "delims=" %%a in ('powershell -NoProfile -Command "try{$a=(Invoke-RestMet
   if !i!==3 set "IP=%%a"
   if !i!==4 set "HOST=%%a"
 )
-echo !MDNS!/| clip
+echo !IP!/| clip
 
 echo.
 echo ============================================================
@@ -86,7 +86,7 @@ echo    En Safari del iPad escribe:
 echo.
 echo         !IP!/
 echo.
-echo    (Tambien vale:  !MDNS!/  -  es fija, no cambia)
+echo    (Si la IP cambia en otra red, prueba:  !MDNS!/ )
 echo    - Ya esta copiada al portapapeles.
 echo.
 echo ============================================================

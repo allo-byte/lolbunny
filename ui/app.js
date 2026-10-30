@@ -605,6 +605,19 @@ function buildReviewBlock(p) {
     <div class="br-note">PERFECTO: nada lo mejora más de ${rv.thresholds.perfect_below}% · DEJA: mejora de ${rv.thresholds.perfect_below}% a ${rv.thresholds.change_from}% · CAMBIA: más de ${rv.thresholds.change_from}%. Los % comparan tu duelo con y sin el cambio; el coste cuenta que vendes el objeto por el ${rv.sell_back}% de su precio. Duelo simplificado: sin habilidades, runas ni posicionamiento.</div></div>`;
 }
 
+function laneSelector(p) {
+  const ln = p.lane;
+  const laneSel = ln && (ln.lane_options || []).length
+    ? `<div class="sg-lane"><div class="sg-lt">Línea del rival${ln.my_lane ? ` <small>(tú: ${esc(ln.my_lane)})</small>` : ""} · <small>${ln.manual ? "elegida por ti" : esc(ln.source || "")}</small></div>
+        <div class="sg-lc"><button class="lane-chip ${ln.manual ? "" : "on"}" data-laneview="">Auto</button>${ln.lane_options.map((o) =>
+          `<button class="lane-chip ${ln.manual && o.picked ? "on" : ""} ${o.picked ? "cur" : ""}" data-laneview="${esc(o.lane)}" title="${esc(o.champion)} juega ${esc(o.label)}">${esc(o.label)} <small>${esc(o.champion)}</small></button>`).join("")}</div>
+        ${ln.manual ? "" : `<div class="sg-lh">¿No está en esa línea? Toca la línea correcta y recalculo contra ese rival.</div>`}</div>`
+    : "";
+  if (laneSel) return laneSel;
+  // Sin datos de línea: se avisa en vez de callar (suele ser una app sin reiniciar tras actualizar).
+  return `<div class="sg-lane"><div class="sg-lt">Línea del rival</div><div class="sg-lh">Sin datos de línea todavía. Si sigue así, cierra la app y ábrela otra vez para cargar la versión nueva.</div></div>`;
+}
+
 let lbOpen = false;
 
 function liveBuildBox(p) {
@@ -615,7 +628,7 @@ function liveBuildBox(p) {
   const stateWord = rival ? { delante: "vas por delante", parejo: "parejos", detras: "vas por detrás" }[rival.verdict] : "";
   const head = `<div class="lb-head"><span class="lb-title">TU BUILD EN VIVO</span>${
     p.exact ? `<span class="lb-exact" title="Tus estadísticas (vida, armadura, RM, daño, velocidad de ataque…) vienen directamente del juego, con runas y bonos incluidos">● stats reales</span>` : ""}${
-    rival ? `<span class="lb-vs">vs ${esc(rival.champion)} · ${stateWord} (${rival.r.toFixed(2)})</span>` : ""}</div>`;
+    rival ? `<span class="lb-vs">vs ${esc(rival.champion)}${p.lane && p.lane.rival_lane ? ` (${esc(p.lane.rival_lane)})` : ""} · ${stateWord} (${rival.r.toFixed(2)})</span>` : ""}</div>`;
   const mark = { perfecto: "✓", deja: "=", cambia: "⇄", construccion: "…", "": "" };
   const items = (p.owned || []).map((o) =>
     `<div class="lb-it ${o.status}" title="${esc(o.name)}"><img src="${o.icon}" alt=""><i>${mark[o.status] || ""}</i></div>`).join("");
@@ -637,9 +650,38 @@ function liveBuildBox(p) {
         p.ugg_next && p.ugg_next.id !== b.id ? ` · <small>U.GG: ${esc(p.ugg_next.name)}</small>` : ""}</div></div></div>`
     : (rv ? `<div class="lb-next none">Ninguna compra mejora tu duelo ahora${p.ugg_next ? ` · plan U.GG: ${esc(p.ugg_next.name)}` : ""}.</div>` : "");
   const detail = rv
-    ? `<details class="lb-det" ${lbOpen ? "open" : ""} ontoggle="lbOpen=this.open"><summary>Ver detalle</summary>${parityBlock(p, true)}${buildReviewBlock(p)}</details>`
+    ? `<details class="lb-det" data-keep="lb" ${lbOpen ? "open" : ""}><summary>Ver detalle</summary>${parityBlock(p, true)}${buildReviewBlock(p)}</details>`
     : "";
-  return `<div class="lb ${verdict}">${head}<div class="lb-items">${items}</div>${line}${next}${detail}</div>`;
+  return `<div class="lb ${verdict}">${head}${laneSelector(p)}<div class="lb-items">${items}</div>${line}${next}${buildsBlock(p.builds)}${detail}</div>`;
+}
+
+let bbOpen = false, bbKind = "";
+
+function buildsBlock(b) {
+  if (!b || !b.available || !(b.builds || []).length) return "";
+  const list = b.builds;
+  const cur = list.find((x) => x.kind === bbKind) || list[0];
+  const tabs = list.map((x) =>
+    `<button class="bb-tab ${x.kind === cur.kind ? "on" : ""}" data-bbkind="${x.kind}">${esc(x.title)}${x === list[0] ? " ★" : ""} <i class="mc-chip ${esc(x.rating || "")}">${x.pct_best != null ? x.pct_best + "%" : ""}</i></button>`).join("");
+  const needTxt = { corta_curas: "corta curas", pen_armadura: "pen. armadura", pen_magica: "pen. mágica",
+    tenacidad: "tenacidad", rompe_escudos: "rompe escudos" };
+  const its = cur.items.map((it, i) =>
+    `<div class="bb-it" title="${esc(it.name)} (${it.price}g)"><span class="bb-n">${i + 1}</span><img src="${it.icon}" alt=""><small>${esc(it.label)}</small><i>${it.gain_pct >= 0 ? "+" : ""}${it.gain_pct}%</i></div>`).join("");
+  const ch = cur.cheap || { now: [], left: 0 };
+  const parts = cur.items.map((it) => (it.parts || []).length
+    ? `<div class="bb-pg" title="${esc(it.name)}"><img class="bb-pt" src="${it.icon}" alt=""><span>←</span>${it.parts.map((c) =>
+        `<span class="bb-c ${c.owned ? "own" : ""}" title="${esc(c.name)} · ${c.price}g${c.owned ? " · ya lo tienes" : ""}"><img src="${c.icon}" alt=""><small>${c.owned ? "✓" : c.price}</small></span>`).join("")}</div>` : "").join("");
+  const nowTxt = ch.now.length
+    ? `Con tu oro actual compra ya: ${ch.now.map((c) => `<img class="bb-nowi" src="${c.icon}" alt="" title="${esc(c.name)}"><b>${esc(c.name)}</b> <small>${c.price}g</small>`).join(" + ")}${ch.left > 0 ? ` · te sobran ${ch.left}g` : ""}`
+    : "Con tu oro actual no te alcanza ni para un componente útil.";
+  const cheap = parts ? `<div class="bb-cheap"><div class="bb-ct">Con poco oro: la misma build en componentes</div><div class="bb-parts">${parts}</div><div class="bb-now">${nowTxt}</div></div>` : "";
+  const cov = (cur.covers || []).filter((c) => needTxt[c]).map((c) => needTxt[c]).join(" · ");
+  return `<details class="bb" data-keep="bb" ${bbOpen ? "open" : ""}><summary>Builds completas contra su equipo <small>(${list.length} opciones, de ${b.catalog} objetos)</small></summary>
+    <div class="bb-tabs">${tabs}</div>
+    <div class="bb-blurb">${cur.verdict ? `<b class="mc-verdict ${esc(cur.rating || "")}">${esc(cur.verdict)}</b><br>` : ""}${esc(cur.blurb)}</div>
+    <div class="bb-items">${its}</div>${cheap}
+    <div class="bb-sum">Paridad ${cur.r_now.toFixed(2)} → <b>${cur.r_final.toFixed(2)}</b> (${cur.gain_pct >= 0 ? "+" : ""}${cur.gain_pct}%) · ${cur.total_cost}g${cur.missing > 0 ? ` (faltan ${cur.missing}g)` : ""} · vida ${cur.hp} · arm ${cur.armor} · RM ${cur.mr}${cov ? `<br>Cubre: ${cov}` : ""}${b.heals ? `<br><b>Rival con robo de vida:</b> todas llevan corta curas.` : ""}</div>
+    <div class="bb-note">${esc(b.note || "")} Orden = compra primero lo que más rinde por oro. Cada % es lo que ese objeto sube la paridad dentro de la build.</div></details>`;
 }
 
 function hybridBlock(h) {
@@ -1021,7 +1063,7 @@ function foeCard(e, kind) {
     ? ""
     : `${counters ? `<div class="en-sub" style="margin:0 0 4px">Cómprale esto (contra <b>${esc(e.champion)}</b>):</div><div class="cp-col">${counters}</div>` : ""}${swap}`;
   return `<div class="enemy-card${isAlly ? " ally-card" : ""}">
-    <div class="enemy-head"><img src="${e.icon}" alt=""><b>${esc(e.champion)}</b><span class="en-sub">${esc(e.source || "")}</span></div>
+    <div class="enemy-head"><img src="${e.icon}" alt=""><b>${esc(e.champion)}</b>${e.lane ? `<span class="lane-tag" title="Línea que juega">${esc(e.lane)}</span>` : ""}<span class="en-sub">${esc(e.source || "")}</span></div>
     <div class="enemy-cols">
       <div class="enemy-block">
         <div class="en-sub" style="margin:0 0 4px">${esc(e.items_label)}</div>
@@ -1237,13 +1279,85 @@ function secPet(st) {
     ${p.note ? `<p class="pet-note dim">${esc(p.note)}</p>` : ""}`;
 }
 
+/* ---------- Mi partida: tu campeón, stats reales, 6 huecos y cruces por línea ---------- */
+function mgSlot(sl) {
+  if (!sl.item) {
+    const b = sl.swap;
+    return `<div class="mg-slot empty"><div class="mg-ico empty">+</div><div class="mg-st"><b>Hueco libre</b>${
+      b ? `<div class="mg-why"><img src="${b.icon}" alt=""> ${esc(sl.reason)}</div>` : ""}</div></div>`;
+  }
+  const tag = { keep: sl.status === "perfecto" ? "✓ ÓPTIMO" : "= DEJA", swap: "⇄ CAMBIA", build: "… EN CURSO" }[sl.action] || "";
+  const cls = sl.action === "swap" ? "cambia" : sl.status || "";
+  const swap = sl.action === "swap" && sl.swap
+    ? `<div class="mg-swap"><span>pon</span><img src="${sl.swap.icon}" alt=""><b>${esc(sl.swap.name)}</b> <small>+${sl.swap.gain_main}%</small></div>`
+    : "";
+  return `<div class="mg-slot ${cls}" title="${esc(sl.item.name)}"><div class="mg-ico"><img src="${sl.item.icon}" alt=""></div>
+    <div class="mg-st"><div class="mg-n">${esc(sl.item.name)} <i class="mg-tag ${cls}">${tag}</i></div>
+    <div class="mg-why">${esc(sl.reason)}</div>${swap}</div></div>`;
+}
+
+function mgTeamCol(list, title) {
+  const rows = (list || []).map((p) => `<div class="mg-pl${p.is_me ? " me" : ""}" title="${esc(p.source || "")}">
+      <span class="lane-tag">${esc(p.lane)}</span><img src="${p.icon}" alt="">
+      <b>${esc(p.champion)}</b><small>Nv ${p.level ?? "?"} · ${esc(p.kda)} · ${p.cs} CS</small></div>`).join("");
+  return `<div class="mg-col"><div class="mg-coltitle">${title}</div>${rows}</div>`;
+}
+
+const RATE_WORD = { usa: "✔ USA ESTA", vale: "≈ TAMBIÉN VALE", no: "✖ NO LA USES" };
+
+function mgChoice(c) {
+  if (!c || !(c.rows || []).length) return "";
+  const rows = c.rows.map((r) => `<div class="mc-row ${esc(r.rating || "")}">
+      <div class="mc-top"><b>${esc(r.title)}</b>${(r.also || []).length ? ` <small>(igual que: ${esc(r.also.join(", "))})</small>` : ""}
+        <span class="mc-chip ${esc(r.rating || "")}">${RATE_WORD[r.rating] || ""}</span>
+        <span class="mc-pct" title="Frente a la mejor build (100 %)">${r.pct_best}%</span></div>
+      <div class="mc-items">${(r.items || []).map((i) => `<img src="${i.icon}" alt="" title="${esc(i.name)}">`).join("")}</div>
+      <div class="mc-why">${esc(r.verdict || "")} <small>Sube tu paridad ${r.gain_pct >= 0 ? "+" : ""}${r.gain_pct}%</small></div>
+      <div class="mc-eco">💰 <b>${r.total_cost}g</b>${r.missing > 0 ? ` · te faltan <b>${r.missing}g</b>${r.eta_min != null ? ` (~${r.eta_min} min)` : ""}` : " · ya te alcanza"}${
+        r.gain_per_1k != null ? ` · <b>+${r.gain_per_1k}%</b> por cada 1000g` : ""}${r.gold_eff != null ? ` · eficiencia ${r.gold_eff}%` : ""}${r.cheaper_pick ? ` · <b class="mc-save">más barata</b>` : ""}</div></div>`).join("");
+  return `<div class="sec-title" style="margin-top:10px">¿Qué build me conviene? <span class="right">mejor: ${esc(c.best)}</span></div>
+    <div class="mc">${rows}<div class="mc-note">${esc(c.note || "")}</div></div>`;
+}
+
+function secMyGame(st) {
+  const g = st.mygame;
+  if (!g || st.phase !== "in_game") return "";
+  const kda = g.kda ? `${g.kda.kills}/${g.kda.deaths}/${g.kda.assists}` : "";
+  const score = st.live && st.live.team_scores ? `${st.live.team_scores.blue ?? "-"} : ${st.live.team_scores.red ?? "-"}` : "";
+  const stats = (g.stats || []).map((x) =>
+    `<span class="pill">${esc(x.label)} <b>${esc(x.value)}${esc(x.suffix || "")}</b></span>`).join("");
+  const trinket = g.trinket
+    ? `<div class="mg-trinket" title="${esc(g.trinket.name)}"><img src="${g.trinket.icon}" alt=""><small>Amuleto</small></div>` : "";
+  return `<div class="mg">
+    <div class="sec-title">Mi partida <span class="right">${g.stats_exact ? "● stats reales del juego" : ""}</span></div>
+    <div class="mg-head"><img class="mg-champ" src="${g.icon}" alt="">
+      <div><div class="champ-name">${esc(g.champion)} ${g.lane ? `<span class="lane-tag">${esc(g.lane)}</span>` : ""}</div>
+      <div class="stat-row">
+        <span class="pill gold">Oro <b>${g.gold}</b></span><span class="pill">Nivel <b>${g.level}</b></span>
+        ${kda ? `<span class="pill">KDA <b>${kda}</b></span>` : ""}
+        <span class="pill">CS <b>${g.cs}</b> <small>(${g.cs_min}/min)</small></span>
+        ${g.ward_score != null ? `<span class="pill">Visión <b>${g.ward_score}</b></span>` : ""}
+        ${st.live ? `<span class="pill">Tiempo <b>${esc(st.live.time)}</b></span>` : ""}
+        ${score ? `<span class="pill">Marcador <b>${score}</b></span>` : ""}
+      </div></div></div>
+    ${stats ? `<div class="stat-row mg-stats">${stats}</div>` : ""}
+    <div class="sec-title" style="margin-top:10px">Mi build · 6 huecos <span class="right">${esc(g.summary || "")}</span></div>
+    <div class="mg-slots">${(g.slots || []).map(mgSlot).join("")}${trinket}</div>
+    ${mgChoice(g.build_choice)}
+    <div class="sec-title" style="margin-top:10px">Equipos por línea <span class="right">${g.rival ? "tu rival: " + esc(g.rival) : ""}</span></div>
+    <div class="mg-teams">${mgTeamCol(g.teams && g.teams.mine, "Mi equipo")}${mgTeamCol(g.teams && g.teams.foes, "Rivales")}</div>
+  </div>`;
+}
+
 function buildSections(st) {
   const secs = [];
   secs.push(["hero", secHero(st)]);
+  const hasMyGame = st.phase === "in_game" && !!st.mygame;
+  if (hasMyGame) secs.push(["mygame", secMyGame(st)]);
   if (st.phase === "in_game") secs.push(["livebuild", liveBuildBox(st.parity)]);
   if (st.champ) {
     secs.push(["identity", secIdentity(st)]);
-    secs.push(["stats", secStats(st)]);
+    if (!hasMyGame) secs.push(["stats", secStats(st)]);
     secs.push(["pet", secPet(st)]);
   }
   secs.push(["matchups", secMatchups(st)]);
@@ -1276,11 +1390,12 @@ function buildSections(st) {
       secs.push(["mystate", myStateBlock(st)]);
       secs.push(["situations", secSituations(st)]);
       secs.push(["counters", secCounters(st)]);
-      secs.push(["live", secLive(st)]);
+      if (!hasMyGame) secs.push(["live", secLive(st)]);
     }
   secs.push(["footer", secFooter(st)]);
   return secs.filter(([, html]) => html && html.trim());
 }
+
 
 function render(st) {
   const dot = document.getElementById("statusDot");
@@ -1342,7 +1457,8 @@ async function poll() {
     render(state);
     lastPollOk = Date.now();
   } catch (e) {
-    main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexi��n con el motor local. Reinicia la app.</div></div>`;
+    console.error("bunnylol poll:", e && e.stack || e);
+    main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexión con el motor local. Reinicia la app.</div></div>`;
     secEls.clear();
     lastOrderKey = "";
   } finally {
@@ -1377,13 +1493,13 @@ function renderAccess(a) {
   const el = document.getElementById("setAccess");
   if (!el || !a) return;
   lastAccess = a;
-  const ip = a.ip_address || "";
-  const mdns = a.mdns || "";
+  const main = (a.ip_url || (a.ip_address ? `http://${a.ip_address}:${a.port || 8765}` : "")) + "/";
+  const others = (a.other_ips || []).map((u) => `<span class="lan-alt">Otra red del PC: <b>${u}/</b></span>`).join("");
   el.innerHTML =
     `<span class="lan-label">Escribe esto en el iPad (Safari)</span>` +
-    `<span class="lan-main">${ip}/</span>` +
-    `<span class="lan-alt">Nombre fijo de este PC: <b>${mdns}/</b></span>` +
-    `<span class="lan-alt">Si ninguno abre: <b>${a.netbios || ""}/</b></span>` +
+    `<span class="lan-main">${main}</span>` +
+    `<span class="lan-alt">Nombre del PC: <b>${a.mdns || ""}/</b></span>` +
+    others +
     `<div class="lan-warn">El iPad y este PC deben estar en la misma Wi-Fi. ` +
     `Si la IP cambia de red, se actualiza sola cada pocos segundos.</div>`;
 }
@@ -1398,7 +1514,7 @@ function refreshAccess() {
 function copyLanAddress() {
   const a = lastAccess;
   if (!a) return;
-  const text = (a.ip_address || a.mdns || "") + "/";
+  const text = (a.ip_url || a.mdns || "") + "/";
   const done = () => {
     const b = document.getElementById("btnCopyLan");
     if (b) { const old = b.textContent; b.textContent = "Copiado!"; setTimeout(() => (b.textContent = old), 1200); }
@@ -1449,7 +1565,7 @@ function fillSettingsPanel() {
   if (openLan && !openLan.dataset.bound) {
     openLan.dataset.bound = "1";
     openLan.addEventListener("click", () => {
-      window.open(lastAccess && lastAccess.mdns ? lastAccess.mdns + "/" : "/", "_blank");
+      window.open(lastAccess && (lastAccess.ip_url || lastAccess.mdns) ? (lastAccess.ip_url || lastAccess.mdns) + "/" : "/", "_blank");
     });
   }
   document.querySelectorAll("#setModeChips .chip").forEach((c) => {
@@ -1492,6 +1608,20 @@ function setCT(on) {
   document.getElementById("ctBadge").classList.toggle("hidden", !ctOn);
   document.getElementById("btnCT").classList.toggle("active", ctOn);
 }
+
+document.addEventListener("click", (e) => {
+  const lv = e.target.closest && e.target.closest("[data-laneview]");
+  if (lv) { postSettings({ lane_view: lv.dataset.laneview, lane_rival: "" }); return; }
+  const t = e.target.closest && e.target.closest("[data-bbkind]");
+  if (t) { bbKind = t.dataset.bbkind; if (state) render(state); }
+});
+// <details> recuerdan si el jugador los abrió (el evento toggle no burbujea: captura)
+document.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (!d || !d.dataset) return;
+  if (d.dataset.keep === "bb") bbOpen = d.open;
+  else if (d.dataset.keep === "lb") lbOpen = d.open;
+}, true);
 
 document.addEventListener("click", async (e) => {
   const roleBtn = e.target.closest("[data-role]");

@@ -210,7 +210,7 @@ def _candidates(overview, owned, me_prof, enemy_profiles):
     return out, proven
 
 
-def plan(live, overview, me_prof, enemy_profiles, rival_pick):
+def plan(live, overview, me_prof, enemy_profiles, rival_pick, lane_info=None):
     """Plan completo en partida, o None si faltan datos."""
     if not live or not live.get("players"):
         return None
@@ -224,11 +224,14 @@ def plan(live, overview, me_prof, enemy_profiles, rival_pick):
            tuple(sorted((k, round(float(v), 1)) for k, v in (live_stats or {}).items()
                         if isinstance(v, (int, float)))),
            tuple((p.get("champion"), int(p.get("level") or 1), tuple(sorted(p.get("items") or [])))
-                 for p in live["players"] if not p.get("mine")), ddragon.version)
+                 for p in live["players"] if not p.get("mine")), ddragon.version,
+           (rival_pick or {}).get("champion"), bool((lane_info or {}).get("manual")))
     if _MEMO.get("key") == key:
         return _MEMO["out"]
     model = MeModel(me_champ, level, owned, live_stats)
     out = _plan(live, overview, me_prof, enemy_profiles, rival_pick, model, level, owned)
+    if out is not None and lane_info:
+        out["lane"] = {k: lane_info[k] for k in ("my_lane", "rival_lane", "source", "options", "lane_options", "manual")}
     _MEMO["key"], _MEMO["out"] = key, out
     return out
 
@@ -324,6 +327,13 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
     except Exception as e:  # la revisión nunca debe tirar el resto del plan
         print(f"[parity] review falló: {e!r}")
         review = None
+    try:
+        from . import builder
+
+        builds = builder.search(live, me_champ, level, owned, gold_now)
+    except Exception as e:  # el buscador nunca debe tirar el resto del plan
+        print(f"[parity] builder falló: {e!r}")
+        builds = None
     for d in duels:
         d.pop("_stats", None)
         d.pop("_pick", None)
@@ -338,6 +348,7 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
         "ugg_next": _ugg_next(overview, owned),
         "alternatives": alts,
         "review": review,
+        "builds": builds,
         "owned": _owned_view(owned, review),
         "exact": bool(getattr(me_champ, "is_exact", False)),
         "source": SOURCE,

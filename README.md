@@ -67,3 +67,13 @@ Matemáticas (verificadas en la wiki oficial de LoL): daño 100/(100+R); orden r
 - **Tus estadísticas son las reales**: vida, armadura, RM, daño, AP, velocidad de ataque, crítico y letalidad se leen del Live Client del juego (con runas, fragmentos y bonos). Cada compra o cambio se calcula sumando/restando solo las estadísticas del objeto (Data Dragon) sobre ese valor exacto.
 - **Coste real**: los componentes que ya tienes se descuentan del precio (receta + componentes) y, si no te alcanza, se sugiere el componente que sí puedes comprar ya.
 - **Lo que sigue siendo estimado**: las estadísticas del rival (base + sus objetos; no se ven sus runas), el reparto AD/AP de cada campeón (textos de habilidades), los efectos pasivos de los objetos y las habilidades. Los umbrales PERFECTO/DEJA/CAMBIA (2% y 6%) son criterios míos, no del juego.
+
+## Apartado «Mi partida» (overlay, solo en partida) — `backend/mygame.py`
+Un solo bloque arriba del overlay con:
+- **Tu campeón y su línea** (Top/Jungla/Mid/ADC/Soporte), oro, nivel, KDA, CS y CS/min, visión, tiempo y marcador.
+- **Tus stats reales** leídas del Live Client (vida actual/máx., AD, AP, armadura, RM, vel. ataque, crítico, haste, letalidad/penetración, robo de vida…).
+- **Tus 6 huecos de objetos**: cada uno dice ✓ ÓPTIMO / = DEJA / ⇄ CAMBIA (con el objeto que pondría y el % que mejora tu duelo y el equipo) o «en curso» si es un componente. El primer hueco libre muestra la siguiente compra. El amuleto va aparte.
+- **Equipos por línea**: los 10 jugadores ordenados Top→Soporte con su línea al lado, nivel, KDA y CS.
+
+En la pantalla de draft (`/`), cada campeón elegido muestra su línea probable (`/api/lanes`). Si ya marcaste tu posición, esa manda.
+Pruebas: `python tests/test_mygame.py`.

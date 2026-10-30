@@ -10,6 +10,17 @@ TFT_MODES = {"tft", "turbo"}
 
 
 
+def _has_smite(p):
+    """True si el jugador lleva Aplastar (es el jungla)."""
+    sp = p.get("summonerSpells") or {}
+    for k in ("summonerSpellOne", "summonerSpellTwo"):
+        s = sp.get(k) or {}
+        txt = f"{s.get('rawDisplayName', '')} {s.get('displayName', '')}".lower()
+        if "smite" in txt or "aplastar" in txt:
+            return True
+    return False
+
+
 def _champ_id(p):
     """Id interno del campeón (p. ej. "Ahri"), igual en todos los idiomas."""
     raw = str((p or {}).get("rawChampionName") or "")
@@ -74,6 +85,7 @@ class LiveClient:
                 "mine": str(p.get("team", "")).lower() == my_team,
                 "is_me": p is me,
                 "position": p.get("position", ""),
+                "smite": _has_smite(p),
                 "champion_id": _champ_id(p),
                 "scores": p.get("scores") or {},
                 "items": pitems,

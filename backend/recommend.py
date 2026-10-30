@@ -279,6 +279,10 @@ class Advisor:
             _log(f"[advisor] build en vivo falló: {e!r}")
             st["parity"] = None
         try:
+            self._tag_lanes(st)
+        except Exception as e:
+            _log(f"[advisor] líneas de los jugadores: {e!r}")
+        try:
             st["burn"] = burn.compute(self.last_live)
         except Exception as e:
             _log(f"[advisor] burn falló: {e!r}")
@@ -289,6 +293,30 @@ class Advisor:
             _log(f"[advisor] low_gold falló: {e!r}")
             st["low_gold"] = None
         return st
+
+    def _tag_lanes(self, st):
+        """Pone la línea (Top/Jungla/Mid/ADC/Soporte) en cada rival y aliado."""
+        live = self.last_live
+        if self.phase != "in_game" or not live or not live.get("players"):
+            return
+        from . import lanerival
+
+        cfg = config.load_settings()
+        cfg["mode_api"] = MODES.get(cfg.get("mode", "ranked"), MODES["ranked"])[1]
+        names = lanerival.labels(live, parity.find_champ, cfg)
+        for key in ("enemies", "allies"):
+            for e in st.get(key) or []:
+                lane = names.get(lanerival._norm(e.get("champion")))
+                if lane:
+                    e["lane"] = lane
+        # Apartado «Mi partida»: tu champ + stats reales + 6 huecos + cruces por línea.
+        from . import mygame
+
+        rows = lanerival.lanes(live, parity.find_champ, cfg)
+        me_champ = parity.find_champ(live.get("champion"), live.get("champion_id"))
+        st["mygame"] = mygame.build(live, st.get("parity"), rows, me_champ)
+        if st["mygame"] and st.get("champ") is not None:
+            st["my_lane"] = st["mygame"].get("lane")
 
     def _live_build(self):
         live = self.last_live
@@ -306,7 +334,14 @@ class Advisor:
             prof = profiles.profile(ch["key"]) if ch else None
             if prof:
                 enemy_profs.append(prof)
-        return parity.plan(live, overview, me_prof, enemy_profs, burn._pick_rival(live))
+        from . import lanerival
+
+        st_cfg = config.load_settings()
+        st_cfg["mode_api"] = MODES.get(st_cfg.get("mode", "ranked"), MODES["ranked"])[1]
+        lane = lanerival.pick(live, parity.find_champ, st_cfg)
+        rival = lane["rival"] if lane else burn._pick_rival(live)
+        out = parity.plan(live, overview, me_prof, enemy_profs, rival, lane_info=lane)
+        return out
 
     def _state_raw(self):
         settings = config.load_settings()

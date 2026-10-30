@@ -87,6 +87,23 @@ def _dmg(b, target_hp, target_mr):
 
 
 def _pick_rival(live):
+    """Rival de línea: el que eliges tú, el de la posición del juego o el deducido
+    por campeón (ver lanerival.py). Si algo falla, la regla simple de siempre."""
+    try:
+        from . import config, lanerival, parity
+        from .ddragon import MODES
+
+        cfg = config.load_settings()
+        cfg["mode_api"] = MODES.get(cfg.get("mode", "ranked"), MODES["ranked"])[1]
+        lane = lanerival.pick(live, parity.find_champ, cfg)
+        if lane:
+            return lane["rival"]
+    except Exception:
+        pass
+    return _pick_rival_simple(live)
+
+
+def _pick_rival_simple(live):
     players = live.get("players") or []
     foes = [p for p in players if not p.get("mine")]
     if not foes:

@@ -138,7 +138,59 @@ function slotHTML(champ, opts) {
     <span class="clear" data-clear="${target}" title="Quitar">&#10005;</span>
     ${star ? `<span class="star ${state.lane === champ.name ? "on" : ""}" data-star="${esc(champ.name)}" title="Marcar como contrincante de línea">&#9733;</span>` : ""}
     <span class="name">${esc(champ.name)}</span>
+    ${laneBadge(target)}
   </div>`;
+}
+
+/* Línea probable de cada campeón elegido (Top/Jungla/Mid/ADC/Soporte), calculada en el servidor. */
+function laneTagFor(target) {
+  const t = state.laneTags;
+  if (!t) return null;
+  if (target === "me") return t.me || null;
+  if (target.startsWith("ally")) return (t.allies || [])[+target.slice(4)] || null;
+  if (target.startsWith("enemy")) return (t.enemies || [])[+target.slice(5)] || null;
+  return null;
+}
+
+function laneBadge(target) {
+  const l = laneTagFor(target);
+  return l ? `<span class="lane-badge" title="Línea que probablemente juega">${esc(l)}</span>` : "";
+}
+
+let laneSig = "";
+function refreshLaneTags() {
+  const sig = JSON.stringify([state.me, state.allies, state.enemies, state.role, state.rank, state.region, state.mode]);
+  if (sig === laneSig) return;
+  laneSig = sig;
+  if (!state.me && !state.allies.some(Boolean) && !state.enemies.some(Boolean)) {
+    state.laneTags = null;
+    paintLaneBadges();
+    return;
+  }
+  const q = new URLSearchParams({
+    me: state.me || "",
+    role: state.role || "",
+    allies: state.allies.map((k) => k || "").join(","),
+    enemies: state.enemies.map((k) => k || "").join(","),
+  });
+  fetch("/api/lanes?" + q.toString(), { cache: "no-store" })
+    .then((r) => r.json())
+    .then((d) => {
+      if (sig !== laneSig) return; // llegó una respuesta vieja
+      state.laneTags = d && d.ok ? d : null;
+      paintLaneBadges();
+    })
+    .catch(() => {});
+}
+
+function paintLaneBadges() {
+  document.querySelectorAll(".slot[data-target]").forEach((el) => {
+    const target = el.dataset.target;
+    const old = el.querySelector(".lane-badge");
+    if (old) old.remove();
+    if (!el.querySelector("img")) return; // hueco vacío
+    el.insertAdjacentHTML("beforeend", laneBadge(target));
+  });
 }
 
 function renderSlots() {
@@ -154,6 +206,7 @@ function renderSlots() {
     ? "Contrincante de línea: " + state.lane
     : "Sin contrincante de línea marcado (opcional).";
   $("#btnAnalyze").disabled = !(state.me && state.enemies.some(Boolean));
+  refreshLaneTags();
 }
 
 function renderAll() {
