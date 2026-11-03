@@ -2,11 +2,14 @@ import json
 import mimetypes
 import os
 import threading
+import time
+import traceback
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import ai_routes
 from . import config
+from . import connlog
 from . import draft
 from . import journal
 from .ddragon import MODES, RANK_NAMES, REGION_NAMES, ROLE_NAMES, ddragon
@@ -70,8 +73,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(body)
-        except Exception:
-            pass
+        except Exception as e:                      # el cliente (iPad) cortó a mitad de respuesta
+            connlog.event("respuesta_cortada", ip=self._ip(), path=self.path, error=type(e).__name__, bytes=len(body))
+
+    def _ip(self):
+        return self.client_address[0] if self.client_address else "?"
 
     def _is_remote(self):
         host = self.client_address[0] if self.client_address else ""
@@ -130,13 +136,18 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        t0 = time.time()
         try:
             self._do_GET()
         except Exception as e:                      # una petición rota nunca debe tumbar el servidor
+            connlog.write("error_get", ip=self._ip(), path=self.path, error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
             try:
                 self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
             except Exception:
                 pass
+        dt = time.time() - t0
+        if dt > 3.0 and self.path.startswith("/api/"):
+            connlog.event("peticion_lenta", every=5.0, ip=self._ip(), path=self.path.split("?")[0], seg=round(dt, 1))
 
     def _do_GET(self):
         if self._ai("GET"):
@@ -156,11 +167,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._serve_file(full, "no-cache")
             return
+        if path == "/api/ping":
+            # Ligero y sin tocar el motor: el overlay lo usa para saber si el PC responde.
+            self._send(200, {"ok": True, "t": time.time(), "boot": connlog.BOOT_ID})
+            return
         if path == "/api/state":
             try:
                 self._send(200, advisor.state())
             except Exception as e:
-                self._send(500, {"error": str(e)})
+                connlog.write("error_state", ip=self._ip(), error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
+                self._send(500, {"ok": False, "error": str(e)})
             return
         if path == "/api/settings":
             self._send(200, config.load_settings())
@@ -302,6 +318,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._do_POST()
         except Exception as e:
+            connlog.write("error_post", ip=self._ip(), path=self.path, error=repr(e))
             try:
                 self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
             except Exception:
@@ -356,6 +373,21 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, {"ok": True, "entry": updated})
             except Exception as e:
                 self._send(400, {"ok": False, "error": str(e)})
+            return
+        if path == "/api/clientlog":
+            # Diagnóstico enviado por el navegador del iPad (desconexiones, reanudaciones). Acotado y limitado por IP.
+            ip = self._ip()
+            if not connlog.allow_client(ip):
+                self._send(429, {"ok": False, "error": "demasiados registros"})
+                return
+            try:
+                if int(self.headers.get("Content-Length", 0) or 0) > 16384:
+                    self._send(413, {"ok": False, "error": "demasiado grande"})
+                    return
+                n = connlog.client_events(ip, self._body())
+            except Exception:
+                n = 0
+            self._send(200, {"ok": True, "logged": n, "boot": connlog.BOOT_ID})
             return
         if path == "/api/quit":
             threading.Thread(target=_quit_now, daemon=True).start()
