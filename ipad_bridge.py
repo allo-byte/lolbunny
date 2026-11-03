@@ -22,7 +22,9 @@ import time
 from logging.handlers import RotatingFileHandler
 
 IDLE_TIMEOUT = 90.0        # s sin datos en ninguna dirección: se cierra (el servidor de la app corta a los 30 s)
-CONNECT_TIMEOUT = 5.0
+CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC (127.0.0.1), así que conecta en milisegundos.
+                           # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
+                           # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
 MAX_CONNECTIONS = 200
 SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
 
@@ -83,9 +85,9 @@ def tune(sock, idle=IDLE_TIMEOUT):
 
 class Bridge:
     def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
-                 max_conn=MAX_CONNECTIONS, logger=None):
+                 max_conn=MAX_CONNECTIONS, logger=None, connect_timeout=CONNECT_TIMEOUT):
         self.port_app, self.port_bridge, self.host = port_app, port_bridge, host
-        self.idle, self.max_conn = idle, max_conn
+        self.idle, self.max_conn, self.connect_timeout = idle, max_conn, connect_timeout
         self.log = logger or make_logger()
         self.stats = {"accepted": 0, "app_unreachable": 0, "rejected": 0, "idle_closed": 0, "accept_errors": 0,
                       "rebinds": 0, "active": 0}
@@ -117,6 +119,10 @@ class Bridge:
         srv.listen(64)
         srv.settimeout(1.0)               # para poder parar y vigilar el estado sin quedarse en accept() eternamente
         return srv
+
+    def _connect_app(self):
+        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout."""
+        return socket.create_connection(("127.0.0.1", self.port_app), timeout=self.connect_timeout)
 
     # ---- reenvío
     def _copy(self, src, dst, done):
@@ -153,7 +159,7 @@ class Bridge:
         app = None
         try:
             try:
-                app = socket.create_connection(("127.0.0.1", self.port_app), timeout=CONNECT_TIMEOUT)
+                app = self._connect_app()
             except OSError as e:
                 self._bump("app_unreachable")
                 if self._app_down_since is None:

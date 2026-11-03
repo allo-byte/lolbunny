@@ -101,6 +101,29 @@ class BridgeTests(unittest.TestCase):
             h.flush()
         self.assertIn("[app_caida]", open(os.environ["BUNNYLOL_BRIDGE_LOG"], encoding="utf-8").read())
 
+    def test_app_down_with_slow_os_refusal_still_closes_quickly(self):
+        # En Windows, conectar a un puerto cerrado de 127.0.0.1 puede tardar ~2 s en ser rechazado.
+        # El puente no debe esperar lo que tarde el sistema: corta en su propio tope (connect_timeout).
+        b = self.bridge()
+        stop_app(self.app)
+        OS_REFUSAL = 2.05
+
+        def slow_refusal():                       # como create_connection(timeout=...): el SO tarda y el tope corta antes
+            time.sleep(min(OS_REFUSAL, b.connect_timeout))
+            raise (ConnectionRefusedError if b.connect_timeout >= OS_REFUSAL else socket.timeout)("rechazo lento simulado")
+
+        b._connect_app = slow_refusal
+        t0 = time.time()
+        self.assertEqual(get(b.port_bridge), b"")
+        self.assertLess(time.time() - t0, 2.0)
+        self.assertGreaterEqual(b.stats["app_unreachable"], 1)
+        self.assertTrue(wait(lambda: b.stats["active"] == 0))
+
+    def test_connect_timeout_to_local_app_is_short(self):
+        # La app corre en este mismo PC: un tope largo solo sirve para dejar al iPad esperando.
+        self.assertLessEqual(ib.CONNECT_TIMEOUT, 1.5)
+        self.assertEqual(self.bridge().connect_timeout, ib.CONNECT_TIMEOUT)
+
     def test_mute_connection_is_closed_by_idle_timeout(self):
         b = self.bridge(idle=0.5)
         mute = socket.create_connection(("127.0.0.1", b.port_bridge))   # iPad dormido: conecta y no dice nada
