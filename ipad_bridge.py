@@ -26,6 +26,7 @@ CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC 
                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
 MAX_CONNECTIONS = 200
+CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
 SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
 
 
@@ -81,6 +82,38 @@ def tune(sock, idle=IDLE_TIMEOUT):
         sock.settimeout(idle)
     except OSError:
         pass
+
+
+def close_gracefully(sock, wait=CLOSE_DRAIN, limit=65536):
+    """Cierra hacia el cliente sin RST: envía FIN y descarta lo que el cliente ya había enviado.
+
+    Cerrar un socket que aún tiene datos sin leer (la petición del iPad) hace que el sistema responda con RST;
+    el cliente ve entonces un error de conexión (en Windows WinError 10053/10054) en vez de un cierre normal.
+    Acotado: sale en cuanto el cliente cierra su lado, a los `wait` s, o tras descartar `limit` bytes.
+    """
+    try:
+        sock.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+    end = time.time() + wait
+    got = 0
+    try:
+        while got < limit:
+            left = end - time.time()
+            if left <= 0:
+                break
+            sock.settimeout(left)
+            data = sock.recv(4096)
+            if not data:
+                break
+            got += len(data)
+    except OSError:                      # el cliente ya se fue o no dijo nada: da igual, se cierra igualmente
+        pass
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
 
 
 class Bridge:
@@ -154,7 +187,7 @@ class Bridge:
                 full = False
         if full:
             self._warn("limite", "demasiadas conexiones (%d): se rechaza %s" % (self.max_conn, addr[0]))
-            client.close()
+            close_gracefully(client)         # cierre limpio: el rechazo no cuenta como conexión activa
             return
         app = None
         try:
@@ -165,6 +198,7 @@ class Bridge:
                 if self._app_down_since is None:
                     self._app_down_since = time.time()
                 self._warn("app_caida", "la app no responde en 127.0.0.1:%d (%s); el iPad reintentará" % (self.port_app, type(e).__name__))
+                close_gracefully(client)
                 return
             if self._app_down_since is not None:
                 self.log.info("[app_recuperada] la app vuelve a responder tras %d s", time.time() - self._app_down_since)

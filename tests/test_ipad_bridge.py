@@ -54,6 +54,21 @@ def get(port, timeout=3):
         s.close()
 
 
+def get_strict(port, timeout=3):
+    """Como get(), pero SIN tolerar resets: si el puente cierra con RST (WinError 10053/10054), la prueba falla."""
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        s.sendall(b"GET /api/state HTTP/1.1\r\nHost: x\r\n\r\n")
+        out = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                return out
+            out += chunk
+    finally:
+        s.close()
+
+
 def wait(cond, t=5.0):
     end = time.time() + t
     while time.time() < end:
@@ -145,6 +160,48 @@ class BridgeTests(unittest.TestCase):
             m.close()
         self.assertTrue(wait(lambda: b.stats["active"] == 0, 5.0))
         self.assertIn(b"ready", get(b.port_bridge))                # y al liberarse vuelve a atender
+
+    def test_rejection_is_a_clean_close_not_a_reset(self):
+        # Cerrar con la petición del cliente sin leer provoca RST (en Windows: ConnectionAbortedError/ConnectionResetError).
+        b = self.bridge(max_conn=2, idle=3.0)
+        mutes = [socket.create_connection(("127.0.0.1", b.port_bridge)) for _ in range(2)]
+        self.assertTrue(wait(lambda: b.stats["active"] == 2))
+        for _ in range(25):
+            self.assertEqual(get_strict(b.port_bridge), b"")       # EOF limpio, sin excepciones
+        self.assertEqual(b.stats["rejected"], 25)
+        self.assertEqual(b.stats["active"], 2)                     # el límite sigue intacto
+        for m in mutes:
+            m.close()
+
+    def test_limit_holds_under_burst_and_rejects_cleanly(self):
+        b = self.bridge(max_conn=2, idle=3.0)
+        mutes = [socket.create_connection(("127.0.0.1", b.port_bridge)) for _ in range(2)]
+        self.assertTrue(wait(lambda: b.stats["active"] == 2))
+        outs, errs = [], []
+
+        def intento():
+            try:
+                outs.append(get_strict(b.port_bridge))
+            except OSError as e:
+                errs.append(repr(e))
+
+        ts = [threading.Thread(target=intento) for _ in range(30)]
+        [t.start() for t in ts]; [t.join(10) for t in ts]
+        self.assertEqual(errs, [])
+        self.assertEqual(outs, [b""] * 30)
+        self.assertEqual(b.stats["rejected"], 30)
+        self.assertEqual(b.stats["active"], 2)                     # ninguna conexión de más entró
+        for m in mutes:
+            m.close()
+        self.assertTrue(wait(lambda: b.stats["active"] == 0, 5.0))
+        self.assertIn(b"ready", get(b.port_bridge))                # y al liberarse vuelve a atender
+
+    def test_app_down_closes_cleanly_not_with_reset(self):
+        b = self.bridge()
+        stop_app(self.app)
+        for _ in range(3):
+            self.assertEqual(get_strict(b.port_bridge), b"")
+        self.assertGreaterEqual(b.stats["app_unreachable"], 3)
 
     def test_accept_errors_reopen_listener_and_keep_working(self):
         b = self.bridge()
