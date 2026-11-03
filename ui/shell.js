@@ -170,8 +170,14 @@
   }
 
   function loadMeta() {
-    var ctl = new AbortController(); setTimeout(function () { ctl.abort(); }, 8000);
-    return fetch("/api/meta", { cache: "no-store", signal: ctl.signal }).then(function (r) { return r.json(); })
+    var req;
+    if (window.BunnyConn) {
+      req = BunnyConn.fetchJson("/api/meta", { timeout: 8000 });     // límite duro (incluye leer el cuerpo) y comprueba r.ok
+    } else {
+      var ctl = new AbortController(); setTimeout(function () { ctl.abort(); }, 8000);
+      req = fetch("/api/meta", { cache: "no-store", signal: ctl.signal }).then(function (r) { return r.json(); });
+    }
+    return req
       .then(function (m) { meta = m; connOk = true; paintStatus(); if (view === "datos" || view === "diagnostico") renderExtra(); })
       .catch(function () { connOk = false; paintStatus(); });
   }

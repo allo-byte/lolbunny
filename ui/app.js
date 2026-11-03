@@ -1840,8 +1840,8 @@ async function muLiveTick(force) {
   mu.liveBusy = true;
   try {
     const cur = mu.data && mu.data.rev;
-    const r = await fetch("/api/matchup/live" + (cur ? "?rev=" + encodeURIComponent(cur) : ""), { cache: "no-store" });
-    const j = await r.json();
+    const j = await BunnyConn.fetchJson("/api/matchup/live" + (cur ? "?rev=" + encodeURIComponent(cur) : ""),
+      { timeout: 10000, validate: (x) => !!x && typeof x === "object" });
     if (j && j.ok && !j.unchanged && j.rev !== cur) {
       j.at_minute = liveMinute(state);
       mu.data = j;
@@ -2088,58 +2088,70 @@ function render(st) {
 
 let lastPollOk = Date.now();
 let pollFails = 0;
-let pollBusy = false;
 
-async function poll() {
-  if (pollBusy) return;
-  pollBusy = true;
-  try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), 8000);   // una petición colgada no debe bloquear el poller
-    let r;
-    try { r = await fetch("/api/state", { cache: "no-store", signal: ctl.signal }); } finally { clearTimeout(to); }
-    state = await r.json();
-    pollFails = 0;
-    document.body.classList.remove("offline");
-    render(state);
-    lastPollOk = Date.now();
-    if (window.Shell) Shell.setConn(true);
-  } catch (e) {
-    console.error("bunnylol poll:", e && e.stack || e);
-    pollFails++;
-    if (window.Shell) Shell.setConn(false);
-    // Un fallo suelto (wifi del iPad) no borra la pantalla: se mantiene lo último y se avisa.
-    document.body.classList.add("offline");
-    if (pollFails >= 4 && !state) {
-      main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexión con el motor local. Reintentando… (si sigue así, reinicia la app)</div></div>`;
-      secEls.clear();
-      lastOrderKey = "";
-    }
-  } finally {
-    pollBusy = false;
+// Comunicación con el motor: ui/conn.js (límite duro de tiempo, un solo bucle, reanudación y registro de fallos).
+// Un estado válido trae "status": una respuesta de error ({"error": ...}) NUNCA se pinta como si fueran datos.
+const validState = (j) => !!j && typeof j === "object" && !Array.isArray(j) && !j.error && j.status !== undefined;
+const connLog = BunnyConn.createLogger();
+
+function onStateOk(j) {
+  state = j;
+  pollFails = 0;
+  lastPollOk = Date.now();
+  document.body.classList.remove("offline");
+  if (window.Shell) Shell.setConn(true);
+  render(state);                                  // si el render falla, el poller lo registra pero no lo cuenta como desconexión
+}
+
+function onStateFail(e, fails) {
+  pollFails = fails;
+  if (window.Shell) Shell.setConn(false);
+  // Un fallo suelto (wifi del iPad) no borra la pantalla: se mantiene lo último y se avisa.
+  document.body.classList.add("offline");
+  if (fails >= 4 && !state) {
+    main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexión con el motor local. Reintentando… (si sigue así, reinicia la app)</div></div>`;
+    secEls.clear();
+    lastOrderKey = "";
   }
 }
 
-// Un solo poller, y se pausa cuando la ventana esta oculta (ahorra GPU/CPU y FPS)
-function startPoller() {
-  if (window.__pollTick) return;
-  window.__pollTick = setInterval(() => {
-    if (document.visibilityState === "visible") poll();
-  }, 1000);
-}
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    poll();
-    startPoller();
-  }
+const poller = BunnyConn.createPoller({
+  interval: 1000,
+  isVisible: () => document.visibilityState === "visible",   // oculto no consulta (ahorra GPU/CPU y FPS)
+  fetch: () => BunnyConn.fetchJson("/api/state", { timeout: 8000, validate: validState }),
+  onOk: onStateOk,
+  onFail: onStateFail,
+  log: connLog.log,
+  flush: connLog.flush,
+  // Último recurso (tras 2 min sin datos válidos): recargar solo si el motor responde; nunca en bucle.
+  onStuck: () => BunnyConn.reloadIfReachable({ log: connLog.log, flush: connLog.flush }),
 });
 
-// Watchdog: si lleva rato sin datos viva, recarga para recuperarse
-setInterval(() => {
-  if (document.visibilityState === "visible" && Date.now() - lastPollOk > 45000) {
-    location.reload();
-  }
-}, 5000);
+// Refresco inmediato (p. ej. tras cambiar un ajuste). Si ya hay una petición en curso, espera a esa.
+async function poll() {
+  await poller.refreshNow();
+}
+
+// Un solo bucle (start() es idempotente).
+function startPoller() {
+  poller.start();
+}
+
+// Safari suspende pestañas y congela temporizadores: al volver, reintentar YA en vez de esperar.
+let lastResume = 0;
+function resumePoll(why) {
+  const t = Date.now();
+  if (t - lastResume < 500) return;               // visibilitychange + pageshow + online suelen llegar juntos
+  lastResume = t;
+  poller.resume(why);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") resumePoll("visible");
+  else poller.hidden();
+});
+window.addEventListener("pageshow", (e) => { if (e.persisted) resumePoll("pageshow"); });
+window.addEventListener("online", () => resumePoll("online"));
+window.addEventListener("offline", () => connLog.log("sin_red", {}));
 
 let lastAccess = null;
 

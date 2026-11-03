@@ -32,6 +32,7 @@ def log_text():
 class OverlayServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        os.environ["BUNNYLOL_CONN_LOG"] = LOG          # otras pruebas pueden haber cambiado la ruta al importarse
         connlog.reset()
         cls.srv = server.start_server(0)
         cls.port = cls.srv.server_address[1]

@@ -113,3 +113,23 @@ Pruebas: `python tests/test_mygame.py`.
 - **Campeones y enfrentamientos**: rivales ordenados TOP / JUNGLE / MID / ADC / SUPPORT, tu campeón y tu build, y el botón **Analizar enfrentamiento** (`POST /api/matchup` → `backend/matchup.py`): tu build real contra cada rival y contra su composición, con qué objetos cambiar, conservar y comprar, y el porqué. Se recalcula con la partida actual (no hay builds fijas); vuelve a pulsarlo tras comprar.
 - **Viabilidad** (`backend/viability.py`): % por objeto = beneficio contra tu rival 35 % + contra el equipo 25 % + oro 20 % + fase 10 % + encaje con tu campeón 10 %. «USA ESTA» = la mejor (≥ 50 %); «NO RECOMENDADA» = < 40 % o no mejora nada. No es probabilidad de ganar.
 - Pruebas: `python tests/test_viability_matchup.py`.
+
+## Overlay en el iPad: reconexión automática y diagnóstico
+El overlay consulta `/api/state` cada segundo (no usa WebSocket ni sesiones). Antes, una petición a medias o una respuesta de
+error dejaban la pantalla visible pero sin datos hasta refrescar Safari. Ahora (`ui/conn.js`):
+- Cada petición tiene un **límite duro de 8 s que incluye leer el cuerpo**; solo se pintan respuestas válidas (`r.ok` y con `status`).
+  Un fallo mantiene lo último en pantalla y muestra «Reconectando…».
+- **Un único bucle** (nunca peticiones solapadas), con espera creciente tras fallos (1 → 2 → 4 → 8 → 10 s).
+- Al **volver a primer plano, recuperar red, restaurar la pestaña o detectar que Safari congeló los temporizadores**, reintenta al instante.
+  Si una petición queda colgada, el vigilante rearma el bucle.
+- Recargar la página es el **último recurso**: solo tras 2 min sin datos y si el PC responde a `/api/ping`, y como mucho una vez cada 5 min.
+- `ipad_bridge.py` ahora sobrevive a errores de `accept()`, libera conexiones muertas (90 s), limita a 200 conexiones y avisa si la app del PC no responde.
+
+**Registros para diagnosticar** (en `cache/`, rotativos):
+| Archivo | Qué contiene |
+|---|---|
+| `overlay_conn.log` | errores de `/api/state`, peticiones lentas (>3 s), cortes del iPad a mitad de respuesta y los eventos que envía el propio iPad (`cliente:fallo`, `cliente:recuperado` con `downMs`, `cliente:reanudado`, `cliente:salto_reloj`, `cliente:colgado`, `cliente:recarga`) |
+| `ipad_bridge.log` | `app_caida` / `app_recuperada`, rechazos por límite, errores de `accept`, resumen cada 10 min |
+
+Pruebas: `python -m pytest -q tests` (servidor, puente, Chromium real si Playwright está instalado, y `tests/js/conn.test.js` si hay Node).
+
