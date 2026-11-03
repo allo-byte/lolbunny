@@ -1,3 +1,7 @@
 cache/
 __pycache__/
 *.pyc
+
+# Copias de seguridad manuales: no versionar
+backup_*/
+backup_original/
