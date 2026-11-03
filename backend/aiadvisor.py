@@ -137,8 +137,42 @@ def save_file_config(patch):
     return cur
 
 
+def clear_file_key():
+    """Quita solo la clave API del archivo de IA (cuando ya está a salvo en el Administrador de credenciales)."""
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        return False
+    if not d.pop("ai_api_key", None):
+        return False
+    tmp = CONFIG_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CONFIG_FILE)
+    _FILE_CACHE.update(mt=None, data={})
+    return True
+
+
+def _manager():
+    """Gestor multi-IA (backend/ai). Import perezoso: si falla, la IA de un solo proveedor sigue igual."""
+    try:
+        from .ai.manager import get_manager
+        return get_manager()
+    except Exception:
+        return None
+
+
 def disabled_reason(settings=None):
     """Por qué la IA está apagada (para decírselo al usuario en vez de un «apagada» mudo)."""
+    m = _manager()
+    if m is not None:
+        try:
+            why = m.disabled_reason()
+            if why:
+                return why
+        except Exception:
+            pass
     s = {**load_file_config(), **{k: v for k, v in (settings or {}).items() if v not in (None, "")}}
     provider = str(s.get("ai_provider") or os.environ.get("BUNNYLOL_AI_PROVIDER") or "off").lower()
     if provider in ("", "off", "none", "no"):
@@ -437,11 +471,43 @@ def http_chat(cfg, messages, max_tokens=None):
         raise AIError(type(e).__name__ + (": " + _clip(e, 100) if str(e) else ""))
 
 
-def test_connection(settings=None):
+def default_transport(cfg, messages, validator=None):
+    """Transporte del AIWorker. Con el gestor multi-IA activo (cfg['multi']) reparte entre proveedores según
+    la estrategia del nivel; si no, usa el proveedor único de siempre. http_chat se resuelve al llamar."""
+    if cfg.get("multi"):
+        m = _manager()
+        if m is None:
+            raise AIError("gestor multi-IA no disponible")
+        return m.ask(cfg.get("level", "full"), messages, validator)
+    return http_chat(cfg, messages)
+
+
+default_transport.wants_validator = True
+
+
+def active_config(settings=None):
+    """Config que usa la app: gestor multi-IA si hay algún proveedor listo; si no, el proveedor único de siempre."""
+    m = _manager()
+    if m is not None:
+        try:
+            cfg = m.synthetic_config()
+            if cfg:
+                return cfg
+        except Exception:
+            pass
+    return resolve_config(settings)
+
+
+def test_connection(settings=None, provider=None):
     """Prueba real y barata: ¿responde el proveedor con esta clave y este modelo? Nunca lanza."""
-    cfg = resolve_config(settings)
+    if provider:
+        m = _manager()
+        return m.test(provider) if m is not None else {"ok": False, "error": "gestor multi-IA no disponible"}
+    cfg = active_config(settings)
     if not cfg:
         return {"ok": False, "error": disabled_reason(settings)}
+    if cfg.get("multi"):
+        return _manager().test(cfg["provider"])
     t0 = time.time()
     try:
         text = http_chat(cfg, [{"role": "user", "content": 'Responde solo con este JSON: {"ok":true}'}], max_tokens=100)
@@ -459,7 +525,7 @@ class AIWorker:
     """Una sola petición viva; si llega una nueva mientras espera, la vieja se descarta."""
 
     def __init__(self, transport=None, clock=time.time):
-        self._tx = transport or http_chat
+        self._tx = transport or default_transport
         self._clock = clock
         self._cv = threading.Condition()
         self._pending = None
@@ -530,12 +596,24 @@ class AIWorker:
             t0 = self._clock()
             parsed = None
             try:
-                raw = self._tx(cfg, build_messages(facts))
-                parsed = parse_reply(raw, [c["id"] for c in facts["candidatos"]],
-                                     [c["id"] for c in facts.get("catalogo") or []],
-                                     [c["id"] for c in facts.get("catalogo") or [] if c.get("bota")])
+                ids = [c["id"] for c in facts["candidatos"]]
+                cat_ids = [c["id"] for c in facts.get("catalogo") or []]
+                boots = [c["id"] for c in facts.get("catalogo") or [] if c.get("bota")]
+
+                def validator(text, ids=ids, cat_ids=cat_ids, boots=boots):
+                    return parse_reply(text, ids, cat_ids, boots)
+
+                messages = build_messages(facts)
+                if getattr(self._tx, "wants_validator", False):     # el gestor valida por proveedor y pasa al siguiente
+                    raw = self._tx(cfg, messages, validator)
+                else:
+                    raw = self._tx(cfg, messages)
+                parsed = validator(raw)
                 if parsed is None:
                     raise AIError("respuesta inválida (ignorada)")
+                meta = getattr(raw, "meta", None)                  # quién respondió (atribución por proveedor)
+                if meta:
+                    parsed["meta"] = dict(meta)
                 self._fails = 0
                 self.last_error = ""
             except AIError as e:
@@ -757,17 +835,17 @@ class AILayer:
 
     def fingerprint(self, settings=None):
         """Cambia si cambia la config de IA, la respuesta de la IA o la opinión pegada."""
-        cfg = resolve_config(settings)
-        k = (cfg["provider"], cfg["model"], cfg["base_url"], cfg["key"], cfg["weight"]) if cfg else None
+        cfg = active_config(settings)
+        k = (cfg["provider"], cfg["model"], cfg["base_url"], cfg["key"], cfg["weight"], cfg.get("rev")) if cfg else None
         return (k, self.worker.rev, self.opinion.rev, bool(self.opinion.live()))
 
     def settled(self, sig, settings=None):
         """True si el resultado ya no cambiará solo (IA apagada o respuesta ya recibida): se puede memorizar."""
-        return resolve_config(settings) is None and not self.opinion.live() or self.worker.get(sig) is not None
+        return active_config(settings) is None and not self.opinion.live() or self.worker.get(sig) is not None
 
     def enrich(self, live, result, settings=None, tools=None):
         try:
-            cfg = resolve_config(settings)
+            cfg = active_config(settings)
             op_text = self.opinion.live()
             facts = build_facts(live, result)
             sig = signature(facts)
@@ -798,6 +876,15 @@ class AILayer:
                 result["ai"]["error"] = st["error"]
             result["ai"]["provider"] = (cfg or {}).get("provider")
             result["ai"]["local"] = bool((cfg or {}).get("local"))
+            meta = (ai or {}).get("meta") or {}
+            if meta:                                       # quién produjo esta respuesta (nunca se mezcla entre proveedores)
+                result["ai"]["provider"] = meta.get("provider") or result["ai"]["provider"]
+                result["ai"]["providers"] = list(meta.get("providers") or [])
+                result["ai"]["strategy"] = meta.get("strategy")
+                result["ai"]["attempts"] = list(meta.get("attempts") or []) + list(meta.get("failed") or [])
+                if isinstance(result.get("ai_build"), dict):
+                    result["ai_build"]["provider"] = result["ai"]["provider"]
+                    result["ai_build"]["providers"] = result["ai"]["providers"]
             result["rev"] = f"{sig[:8]}.{st['rev']}.{self.opinion.rev}"
         except Exception as e:                           # la IA es un extra: el análisis base sigue intacto
             result["ai"] = {"status": "error", "error": type(e).__name__}
@@ -805,7 +892,7 @@ class AILayer:
         return result
 
     def status(self, settings=None):
-        cfg = resolve_config(settings)
+        cfg = active_config(settings)
         return {"enabled": bool(cfg), "reason": "" if cfg else disabled_reason(settings),
                 "provider": (cfg or {}).get("provider"), "model": (cfg or {}).get("model"),
                 "local": bool((cfg or {}).get("local")), "has_key": bool((cfg or {}).get("key")),

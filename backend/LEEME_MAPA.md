@@ -60,5 +60,6 @@ Este mapa sirve para encontrar rápido dónde mirar.
 
 ## Subcarpetas
 - `intelligence/`: motor experimental, aislado (ver su README).
+- `ai/`: gestor multi-IA (proveedores, salud, consenso, claves). Ver `LEEME_IA.md`; `aiadvisor.py` sigue siendo la fachada.
 - `patch_pipeline/`: actualización automática de ratios y pasivas por parche.
 - `exact_math/`: simulador y base de ratios.

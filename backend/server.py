@@ -113,7 +113,8 @@ class Handler(BaseHTTPRequestHandler):
         if not (raw.startswith("/api/ai/") or raw == "/api/matchup/live"):
             return False
         # Cambiar la clave o gastar tu cuota solo desde este PC, no desde otros aparatos de la red.
-        if self._is_remote() and raw in ("/api/ai/config", "/api/ai/test") and (method == "POST" or raw == "/api/ai/config"):
+        if self._is_remote() and (raw.startswith("/api/ai/providers") or (
+                raw in ("/api/ai/config", "/api/ai/test") and (method == "POST" or raw == "/api/ai/config"))):
             self._send(403, {"ok": False, "error": "La IA solo se configura desde el PC."})
             return True
         body = None

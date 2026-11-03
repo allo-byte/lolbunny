@@ -13,6 +13,13 @@ from . import aiadvisor
 PREFIXES = ("/api/matchup/live", "/api/ai/")
 
 
+def _reset_worker(advisor):
+    """La config cambió: que la próxima consulta vuelva a preguntar."""
+    advisor.ai.worker._cache.clear()
+    advisor.ai.worker._pause_until = 0.0
+    advisor.ai.worker._fails = 0
+
+
 def _masked(cfg):
     out = dict(cfg)
     k = out.pop("ai_api_key", "")
@@ -47,7 +54,29 @@ def handle(advisor, method, path, body=None):
             advisor.ai.worker._fails = 0
             return 200, {"ok": True, "config": _masked(aiadvisor.load_file_config()), "status": advisor.ai_status()}
         if path == "/api/ai/test" and method == "POST":
-            return 200, aiadvisor.test_connection(None)
+            return 200, aiadvisor.test_connection(None, provider=body.get("provider") or None)
+        # ---- gestor multi-IA (backend/ai): proveedores, orden y estrategia por modo
+        if path.startswith("/api/ai/providers"):
+            m = aiadvisor._manager()
+            if m is None:
+                return 503, {"ok": False, "error": "gestor multi-IA no disponible"}
+            if path == "/api/ai/providers" and method == "GET":
+                m.migrate_legacy()                      # primera vez: trae la IA de un solo proveedor ya configurada
+                return 200, {"ok": True, **m.status()}
+            if path == "/api/ai/providers" and method == "POST":
+                try:
+                    if "order" in body:
+                        m.set_order(body.get("order"))
+                    if "strategy" in body:
+                        m.set_strategy(body.get("strategy"))
+                    if body.get("provider"):
+                        m.save_provider(body["provider"], body)
+                except ValueError as e:
+                    return 400, {"ok": False, "error": str(e)}
+                _reset_worker(advisor)
+                return 200, {"ok": True, **m.status(), "status": advisor.ai_status()}
+            if path == "/api/ai/providers/test" and method == "POST":
+                return 200, m.test(body.get("provider"))
     except Exception as e:
         return 500, {"ok": False, "error": type(e).__name__ + ": " + str(e)[:160]}
     return None, None

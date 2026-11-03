@@ -1312,3 +1312,11 @@ body.remote .lb{font-size:15px}body.remote .lb-it{width:48px;height:48px}
 .ai-cfg select option{color:#000}
 .ai-cfg-msg{padding:6px 8px;border-radius:8px;font-size:.88em}
 .ai-cfg-msg.ok{border:1px solid #2f8f5b}.ai-cfg-msg.bad{border:1px solid #b5832e}
+.prov-box{display:grid;gap:8px;margin-top:6px}
+.prov-row{display:grid;gap:4px;padding:8px;border:1px solid var(--line,#2a3140);border-radius:10px}
+.prov-head{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.prov-box input[type=text],.prov-box input[type=password],.prov-box select{width:100%;box-sizing:border-box;border-radius:8px;padding:6px;background:transparent;color:inherit;border:1px solid var(--line,#2a3140)}
+.prov-box select option{color:#000}
+.prov-badge{font-size:.8em;padding:1px 8px;border-radius:999px;border:1px solid var(--line,#2a3140)}
+.prov-badge.ok{border-color:#2f8f5b}.prov-badge.degradado{border-color:#b5832e}.prov-badge.caido{border-color:#b5412e}
+

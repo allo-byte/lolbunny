@@ -9,8 +9,15 @@ una de cada dos ejecuciones sin que el código de producción hubiera cambiado.
 Aquí se espera a que terminen esos hilos ANTES de ejecutar ninguna prueba, de modo
 que la suite sea determinista. No se salta ni se debilita ningún test.
 """
+import os
+import tempfile
 import threading
 import time
+
+# Aislar las pruebas del equipo real: sin claves del Administrador de credenciales ni proveedores guardados.
+os.environ.setdefault("BUNNYLOL_KEYSTORE", "memory")
+os.environ.setdefault("BUNNYLOL_PROVIDERS_FILE", os.path.join(tempfile.gettempdir(), "bunnylol_test_providers_%d.json" % os.getpid()))
+os.environ.setdefault("BUNNYLOL_KEYS_FILE", os.path.join(tempfile.gettempdir(), "bunnylol_test_keys_%d.json" % os.getpid()))
 
 
 def pytest_collection_finish(session):

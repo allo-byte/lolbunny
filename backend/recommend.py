@@ -404,7 +404,7 @@ class Advisor:
         """Herramientas para la capa de IA: catálogo cerrado de objetos reales, nombre/icono y coste neto.
         El catálogo solo se arma si la IA está activa y se cachea por versión de parche."""
         tools = {"info": itemrules.item_info, "cost": parity.net_cost, "parts": self._item_parts}
-        if not aiadvisor.resolve_config(settings):
+        if not aiadvisor.active_config(settings):
             return tools
         ver = ddragon.version
         if not (self._ai_cat and self._ai_cat[0] == ver):

@@ -56,3 +56,31 @@ Mientras responde aparece «La IA está armando tu build…»; si cambia la part
   lo adelantado lleva la etiqueta «por oro».
 - Si el siguiente objeto no alcanza, indica qué componente comprar ya con el oro sobrante.
 - Muestra oro, g/min, «Compra YA», «Siguiente» (faltante, minutos y minuto de partida) y avisa si te sobra oro parado.
+
+## Varias IA a la vez (gestor multi-IA, `backend/ai/`)
+Panel: Analizar enfrentamiento → «⚙ Conectar la IA» → **Varias IA a la vez**. Cada proveedor se activa con su casilla,
+con su modelo y su clave, y tiene su propio estado (OK / con fallos / caído), tiempo de espera y validación.
+Nada viene activado: sin proveedores marcados todo sigue como antes (IA de un solo proveedor o apagada).
+
+| Proveedor | Método hoy | Notas |
+|---|---|---|
+| Gratis (Pollinations) | API pública sin clave | Sin garantías: puede caerse. |
+| Gemini | API con clave (Google AI Studio) | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| DeepSeek | API con clave | `https://api.deepseek.com` |
+| Grok, ChatGPT | API con clave | La web gratuita de ambos solo será posible por el puente Edge (etapa 3). |
+| Ollama | Local, sin clave | Necesita Ollama abierto. |
+
+- **Estrategia por modo:** rápido = *principal + respaldo* (responde uno; el siguiente solo si falla, tarda o responde algo
+  inválido); completo = *consenso* (varios en paralelo, máx. 3, y se fusionan las respuestas ya validadas).
+  Con un solo proveedor usable, ambos modos equivalen a *principal + respaldo*. Hoy el análisis de enfrentamiento usa el modo completo;
+  el modo rápido se conectará a los activadores de partida en la etapa 4.
+- **Si todos fallan** manda el motor matemático, como siempre.
+- **Atribución:** cada respuesta lleva el proveedor que la produjo (`result.ai.provider/providers/strategy/attempts`); en consenso,
+  `by` indica quién aportó cada objeto. Los contadores por proveedor (llamadas, errores, inválidas, latencia) se acumulan para la etapa 5.
+- **Claves:** Administrador de credenciales de Windows (módulo `keyring`, ya en requirements). Sin keyring quedan en
+  `~/.bunnylol_ai_keys.json` y el panel lo avisa. Nunca se guardan en `~/.bunnylol_providers.json` ni se devuelven por la API.
+- **Migración:** al abrir el panel por primera vez se importa tu IA de un solo proveedor (`~/.bunnylol_ai.json`); si la clave
+  queda a salvo en el Administrador de credenciales, se borra del archivo en claro.
+- **Rutas nuevas** (solo desde el PC): `GET/POST /api/ai/providers`, `POST /api/ai/providers/test`, y `POST /api/ai/test` acepta `{"provider": id}`.
+- **Puente Edge:** declarado pero NO disponible (etapa 3); el panel lo indica y no se simula nada.
+

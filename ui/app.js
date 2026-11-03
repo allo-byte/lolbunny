@@ -1677,6 +1677,7 @@ function muAiConfig(ai) {
         : `<label>Clave API <input data-aicfg="key" type="password" autocomplete="off" value="${esc(c.key)}" placeholder="${c.hasKey ? "guardada " + esc(c.hint) + " (déjalo vacío para conservarla)" : "pega tu clave"}"></label>`}
       <div class="ai-btns"><button type="button" data-aicfg-save ${c.busy ? "disabled" : ""}>${c.busy ? "Probando…" : "Guardar y probar"}</button></div>
       ${c.msg ? `<div class="ai-cfg-msg ${c.ok ? "ok" : "bad"}">${esc(c.msg)}</div>` : ""}
+      ${muProvidersPanel()}
     </div></details>`;
 }
 
@@ -1706,6 +1707,102 @@ async function muSaveAiCfg() {
   c.busy = false; mu.typingUntil = 0;
   if (state) render(state);
 }
+
+/* ---- Gestor multi-IA: varios proveedores a la vez, su estado y la estrategia por modo ---- */
+mu.prov = mu.prov || { loaded: false, data: null, keys: {}, models: {}, msg: {}, busy: "" };
+const PROV_STATE = { sin_uso: "sin usar", ok: "OK", degradado: "con fallos", caido: "caído" };
+const PROV_STRAT = [["failover", "Principal + respaldo"], ["consensus", "Consenso (todos a la vez)"]];
+
+async function muLoadProviders(force) {
+  if (mu.prov.loaded && !force) return;
+  mu.prov.loaded = true;
+  try {
+    const r = await fetch("/api/ai/providers", { cache: "no-store" });
+    if (!r.ok) return;
+    mu.prov.data = await r.json();
+    if (state && !(mu.typingUntil > Date.now())) render(state);
+  } catch (e) { /* servidor sin el gestor: el panel simplemente no aparece */ }
+}
+
+async function muPostProviders(patch, id, test) {
+  mu.prov.busy = id || "*"; mu.typingUntil = 0;
+  if (state) render(state);
+  try {
+    const r = await fetch("/api/ai/providers", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+    const out = await r.json();
+    if (!r.ok || out.ok === false) throw new Error(out.error || "http " + r.status);
+    mu.prov.data = out;
+    if (id) { mu.prov.keys[id] = ""; mu.prov.msg[id] = { ok: true, t: "Guardado" }; }
+    if (id && test) {
+      const t = await (await fetch("/api/ai/providers/test", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: id }) })).json();
+      mu.prov.msg[id] = t.ok ? { ok: true, t: `Conectado ✓ ${t.model} (${t.ms} ms)` } : { ok: false, t: "No conecta: " + (t.error || "error") };
+      await muLoadProviders(true);
+    }
+    muLiveTick(true);
+  } catch (e) {
+    if (id) mu.prov.msg[id] = { ok: false, t: e.message || "Sin conexión con el motor local." };
+  }
+  mu.prov.busy = ""; mu.typingUntil = 0;
+  if (state) render(state);
+}
+
+function muProvidersPanel() {
+  muLoadProviders();
+  const d = mu.prov.data;
+  if (!d || !d.providers) return "";
+  const st = d.strategy || {};
+  const sel = (lvl) => `<select data-prov-strategy="${lvl}">${PROV_STRAT.map(([v, n]) => `<option value="${v}" ${st[lvl] === v ? "selected" : ""}>${n}</option>`).join("")}</select>`;
+  const rows = d.providers.map((p) => {
+    const h = p.health || {};
+    const badge = !p.configured ? esc(p.reason || "sin configurar") : (PROV_STATE[h.state] || "");
+    const m = mu.prov.msg[p.id];
+    const keyField = p.needs_key || p.id === "custom"
+      ? `<input data-prov-key="${p.id}" type="password" autocomplete="off" value="${esc(mu.prov.keys[p.id] || "")}" placeholder="${p.has_key ? "clave guardada " + esc(p.key_hint) + " (vacío = conservar)" : "pega tu clave API"}">` : "";
+    return `<div class="prov-row">
+      <label class="prov-head"><input type="checkbox" data-prov-toggle="${p.id}" ${p.enabled ? "checked" : ""}> <b>${esc(p.label)}</b>
+        <span class="prov-badge ${esc(h.state || "")}">${badge}</span></label>
+      <small>${esc(p.note || "")}${h.last_error ? " · último error: " + esc(h.last_error) : ""}${h.avg_ms ? " · ~" + h.avg_ms + " ms" : ""}</small>
+      <input data-prov-model="${p.id}" type="text" value="${esc(mu.prov.models[p.id] !== undefined ? mu.prov.models[p.id] : p.model)}" placeholder="${esc(p.default_model || "modelo")}">
+      ${keyField}
+      <div class="ai-btns"><button type="button" data-prov-save="${p.id}" ${mu.prov.busy ? "disabled" : ""}>${mu.prov.busy === p.id ? "Probando…" : "Guardar y probar"}</button>
+        ${p.edge && p.edge.site ? `<small>Puente Edge (${esc(p.edge.site)}): etapa 3, aún no disponible</small>` : ""}</div>
+      ${m ? `<div class="ai-cfg-msg ${m.ok ? "ok" : "bad"}">${esc(m.t)}</div>` : ""}</div>`;
+  }).join("");
+  const ks = d.keystore || {};
+  return `<details data-keep="muprov" ${mu.provOpen ? "open" : ""}><summary>Varias IA a la vez (${(d.active || []).length} activas)</summary>
+    <div class="prov-box">
+      <label>Análisis rápido ${sel("fast")}</label>
+      <label>Análisis completo ${sel("full")}</label>
+      <small>Si un proveedor falla, se cae o responde algo inválido, la app pasa al siguiente y, si no queda ninguno, manda el motor matemático.</small>
+      ${rows}
+      <small>${ks.secure ? "Las claves se guardan en el Administrador de credenciales de Windows." : "Aviso: sin el módulo keyring las claves quedan en un archivo local de tu usuario. Instálalo con «pip install keyring»."}</small>
+    </div></details>`;
+}
+
+document.addEventListener("input", (e) => {
+  const k = e.target.closest && e.target.closest("[data-prov-key]");
+  if (k) { mu.prov.keys[k.dataset.provKey] = k.value; mu.typingUntil = Date.now() + 30000; }
+  const m = e.target.closest && e.target.closest("[data-prov-model]");
+  if (m) { mu.prov.models[m.dataset.provModel] = m.value; mu.typingUntil = Date.now() + 30000; }
+});
+document.addEventListener("change", (e) => {
+  const t = e.target.closest && e.target.closest("[data-prov-toggle]");
+  if (t) { muPostProviders({ provider: t.dataset.provToggle, enabled: t.checked }, t.dataset.provToggle, false); return; }
+  const s = e.target.closest && e.target.closest("[data-prov-strategy]");
+  if (s) muPostProviders({ strategy: { [s.dataset.provStrategy]: s.value } }, "", false);
+});
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("[data-prov-save]");
+  if (!b) return;
+  const id = b.dataset.provSave;
+  const patch = { provider: id };
+  if (mu.prov.keys[id]) patch.api_key = mu.prov.keys[id];
+  if (mu.prov.models[id] !== undefined) patch.model = mu.prov.models[id];
+  muPostProviders(patch, id, true);
+});
+document.addEventListener("toggle", (e) => {
+  if (e.target.matches && e.target.matches('details[data-keep="muprov"]')) mu.provOpen = e.target.open;
+}, true);
 
 /* ---- IA externa (Grok u otra): puntúa solo candidatos del motor; el motor sigue mandando ---- */
 function muAiBlock(ai) {
