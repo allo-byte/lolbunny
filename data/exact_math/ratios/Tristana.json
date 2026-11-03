@@ -1,0 +1,170 @@
+{
+  "champion_id": "Tristana",
+  "champion_name": "Tristana",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Tristana",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        20,
+        19,
+        18,
+        17,
+        16
+      ],
+      "cost": [
+        15,
+        20,
+        25,
+        30,
+        35
+      ],
+      "range": [
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Tristana",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        22,
+        20,
+        18,
+        16,
+        14
+      ],
+      "cost": [
+        30,
+        35,
+        40,
+        45,
+        50
+      ],
+      "range": [
+        900,
+        900,
+        900,
+        900,
+        900
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Tristana",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        16,
+        15.5,
+        15,
+        14.5,
+        14
+      ],
+      "cost": [
+        50,
+        55,
+        60,
+        65,
+        70
+      ],
+      "range": [
+        550,
+        550,
+        550,
+        550,
+        550
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Tristana",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        100,
+        100,
+        100
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        550,
+        550,
+        550
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Tristana",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

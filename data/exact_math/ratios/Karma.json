@@ -1,0 +1,61 @@
+{
+  "champion_id": "Karma",
+  "champion_name": "Karma",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Karma",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        9,
+        8,
+        7,
+        6,
+        5
+      ],
+      "cost": [
+        40,
+        50,
+        60,
+        70,
+        80
+      ],
+      "range": [
+        950,
+        950,
+        950,
+        950,
+        950
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Karma",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

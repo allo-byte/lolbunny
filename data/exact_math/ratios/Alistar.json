@@ -1,0 +1,61 @@
+{
+  "champion_id": "Alistar",
+  "champion_name": "Alistar",
+  "patch": "16.21.1",
+  "skills": {
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Alistar",
+      "ratios": {},
+      "base_damage": [
+        80.0,
+        110.0,
+        140.0,
+        170.0,
+        200.0
+      ],
+      "cooldown": [
+        12,
+        11.5,
+        11,
+        10.5,
+        10
+      ],
+      "cost": [
+        50,
+        55,
+        60,
+        65,
+        70
+      ],
+      "range": [
+        350,
+        350,
+        350,
+        350,
+        350
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Alistar",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

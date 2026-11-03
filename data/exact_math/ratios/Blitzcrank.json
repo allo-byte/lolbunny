@@ -1,0 +1,22 @@
+{
+  "champion_id": "Blitzcrank",
+  "champion_name": "Blitzcrank",
+  "patch": "16.21.1",
+  "skills": {
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Blitzcrank",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

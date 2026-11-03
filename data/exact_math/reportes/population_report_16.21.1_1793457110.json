@@ -1,0 +1,57 @@
+{
+  "success": 5,
+  "failed": 0,
+  "skipped": 0,
+  "champions": {
+    "Jinx": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "LeeSin": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Syndra": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Zed": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Akali": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    }
+  }
+}

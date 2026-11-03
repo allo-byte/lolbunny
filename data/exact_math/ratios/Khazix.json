@@ -1,0 +1,170 @@
+{
+  "champion_id": "Khazix",
+  "champion_name": "Kha'Zix",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Khazix",
+      "ratios": {},
+      "base_damage": [
+        80.0,
+        105.0,
+        130.0,
+        155.0,
+        180.0
+      ],
+      "cooldown": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "cost": [
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "range": [
+        325,
+        325,
+        325,
+        325,
+        325
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Khazix",
+      "ratios": {},
+      "base_damage": [
+        75.0,
+        105.0,
+        135.0,
+        165.0,
+        195.0
+      ],
+      "cooldown": [
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "cost": [
+        55,
+        60,
+        65,
+        70,
+        75
+      ],
+      "range": [
+        1000,
+        1000,
+        1000,
+        1000,
+        1000
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Khazix",
+      "ratios": {},
+      "base_damage": [
+        65.0,
+        100.0,
+        135.0,
+        170.0,
+        205.0
+      ],
+      "cooldown": [
+        20,
+        18,
+        16,
+        14,
+        12
+      ],
+      "cost": [
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "range": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Khazix",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        100,
+        85,
+        70
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        25000,
+        25000,
+        25000
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Khazix",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

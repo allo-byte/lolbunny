@@ -1,0 +1,170 @@
+{
+  "champion_id": "Ivern",
+  "champion_name": "Ivern",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Ivern",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        14,
+        13,
+        12,
+        11,
+        10
+      ],
+      "cost": [
+        60,
+        60,
+        60,
+        60,
+        60
+      ],
+      "range": [
+        1125,
+        1125,
+        1125,
+        1125,
+        1125
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Ivern",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "cost": [
+        30,
+        30,
+        30,
+        30,
+        30
+      ],
+      "range": [
+        1150,
+        1150,
+        1150,
+        1150,
+        1150
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Ivern",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        11,
+        10,
+        9,
+        8,
+        7
+      ],
+      "cost": [
+        70,
+        70,
+        70,
+        70,
+        70
+      ],
+      "range": [
+        750,
+        750,
+        750,
+        750,
+        750
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Ivern",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        140,
+        130,
+        120
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        600,
+        600,
+        600
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Ivern",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

@@ -1,0 +1,170 @@
+{
+  "champion_id": "Lillia",
+  "champion_name": "Lillia",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Lillia",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        6,
+        5.5,
+        5,
+        4.5,
+        4
+      ],
+      "cost": [
+        65,
+        65,
+        65,
+        65,
+        65
+      ],
+      "range": [
+        450,
+        450,
+        450,
+        450,
+        450
+      ],
+      "damage_type": "true",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Lillia",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        14,
+        13,
+        12,
+        11,
+        10
+      ],
+      "cost": [
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "range": [
+        500,
+        500,
+        500,
+        500,
+        500
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Lillia",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "cost": [
+        70,
+        70,
+        70,
+        70,
+        70
+      ],
+      "range": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Lillia",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        150,
+        130,
+        110
+      ],
+      "cost": [
+        50,
+        50,
+        50
+      ],
+      "range": [
+        1600,
+        1600,
+        1600
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Lillia",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

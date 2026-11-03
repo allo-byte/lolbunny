@@ -1,0 +1,186 @@
+{
+  "champion_id": "Yasuo",
+  "champion_name": "Yasuo",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Yasuo",
+      "ratios": {
+        "ad_ratio": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "base_damage": [
+        20,
+        45,
+        70,
+        95,
+        120
+      ],
+      "cooldown": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "cost": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "range": [
+        475,
+        475,
+        475,
+        475,
+        475
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": true,
+      "can_crit": true,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Yasuo",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [
+        26,
+        24,
+        22,
+        20,
+        18
+      ],
+      "cost": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "range": [
+        400,
+        400,
+        400,
+        400,
+        400
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Yasuo",
+      "ratios": {
+        "ap_ratio": [
+          0.6,
+          0.6,
+          0.6,
+          0.6,
+          0.6
+        ]
+      },
+      "base_damage": [
+        70,
+        90,
+        110,
+        130,
+        150
+      ],
+      "cooldown": [
+        10,
+        9,
+        8,
+        7,
+        6
+      ],
+      "cost": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "range": [
+        475,
+        475,
+        475,
+        475,
+        475
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Yasuo",
+      "ratios": {
+        "ad_ratio": [
+          1.5,
+          1.5,
+          1.5
+        ]
+      },
+      "base_damage": [
+        200,
+        300,
+        400
+      ],
+      "cooldown": [
+        80,
+        55,
+        30
+      ],
+      "cost": [
+        0,
+        0,
+        0
+      ],
+      "range": [
+        1200,
+        1200,
+        1200
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Yasuo",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    }
+  }
+}

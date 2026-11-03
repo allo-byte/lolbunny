@@ -1,0 +1,170 @@
+{
+  "champion_id": "Zeri",
+  "champion_name": "Zeri",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Zeri",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "cost": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "range": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Zeri",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        12,
+        11,
+        10,
+        9,
+        8
+      ],
+      "cost": [
+        50,
+        60,
+        70,
+        80,
+        90
+      ],
+      "range": [
+        1150,
+        1150,
+        1150,
+        1150,
+        1150
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Zeri",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        24,
+        22.5,
+        21,
+        19.5,
+        18
+      ],
+      "cost": [
+        90,
+        85,
+        80,
+        75,
+        70
+      ],
+      "range": [
+        25000,
+        25000,
+        25000,
+        25000,
+        25000
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Zeri",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        80,
+        75,
+        70
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        800,
+        800,
+        800
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Zeri",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

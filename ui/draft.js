@@ -342,6 +342,7 @@ function renderResults() {
     learningCard(r) +
     limitsCard(r);
   bindResults();
+  if (window.Shell) Shell.applyView();
 }
 
 function confidenceCard(r) {
@@ -350,7 +351,7 @@ function confidenceCard(r) {
     .map((f) => `<li><span>${esc(f.label)}</span><b>${f.score}/${f.max}</b><em>${esc(f.detail)}</em></li>`)
     .join("");
   const caveats = (c.caveats || []).map((t) => `<li>${esc(t)}</li>`).join("");
-  return `<section class="card" style="margin-top:18px">
+  return `<section class="card" data-sec="conf">
     <h2><span class="num">2</span> Confianza y calidad de los datos</h2>
     <div class="conf-head">
       <span class="conf-level lvl-${esc(c.level)}">${esc(c.level.toUpperCase())} · ${c.score}/100</span>
@@ -449,7 +450,7 @@ function analysisCard(r) {
     .map((w) => `<li><code>[${esc(w.rule)}]</code> ${esc(w.text)}</li>`)
     .join("");
 
-  return `<section class="card">
+  return `<section class="card" data-sec="analysis">
     <h2><span class="num">3</span> Análisis de la partida</h2>
     ${srcBadge(a.source)}
     <h3>Daño del equipo rival</h3>
@@ -515,7 +516,7 @@ function enemiesCard(r) {
       </div>
     </div>`;
   }).join("");
-  return `<section class="card">
+  return `<section class="card" data-sec="enemies">
     <h2><span class="num">4</span> Objetos de los rivales y cómo contrarrestarlos</h2>
     <p class="why">Build típica de cada rival según U.GG (objetos reales del rol más jugado) y sus runas. Los counters salen de las etiquetas oficiales de Riot: <b>regla (sin winrate)</b>, no de estadísticas. Si pone "cambia en tus 6 objetos", es el objeto tuyo a sustituir por el counter.</p>
     ${cards}
@@ -540,7 +541,7 @@ function alliesCard(r) {
       <p class="why">Así juega tu aliado: si su build ya cubre una necesidad (heridas graves, escudos…), tú puedes centrarte en otra.</p>
     </div>`;
   }).join("");
-  return `<section class="card">
+  return `<section class="card" data-sec="allies">
     <h2><span class="num">5</span> Aliados: sus objetos y runas</h2>
     <p class="why">Build y runas típicas de cada aliado según U.GG (rol más jugado). Sirve para repartir las necesidades del equipo y no comprar dos veces lo mismo.</p>
     ${cards}
@@ -656,7 +657,7 @@ function runesCard(r) {
     </div>`)
     .join("");
 
-  return `<section class="card">
+  return `<section class="card" data-sec="runes">
     <h2><span class="num">6</span> Runas recomendadas</h2>
     <div class="badges">${srcBadge(ru.source)}${wrBadges(ru.stats)}${ru.stats.patch ? `<span class="badge">parche ${esc(ru.stats.patch)}</span>` : ""}</div>
     ${keystone}
@@ -997,7 +998,7 @@ function itemsCard(r) {
       })()
     : "";
 
-  return `<section class="card">
+  return `<section class="card" data-sec="items">
     <h2><span class="num">7</span> Build para ganar (contra este rival)</h2>
     ${counterPlanBlock(it.counter_plan)}
     ${counterCoreBlock(r.counter_core)}
@@ -1025,7 +1026,7 @@ function itemsCard(r) {
 
 function learningCard(r) {
   const l = r.learning;
-  return `<section class="card">
+  return `<section class="card" data-sec="learning">
     <h2><span class="num">8</span> Modo aprendizaje</h2>
     <p class="why">${esc(l.note)}</p>
     <div class="actions">
@@ -1037,7 +1038,7 @@ function learningCard(r) {
 }
 
 function limitsCard(r) {
-  return `<section class="limits">
+  return `<section class="limits" data-sec="limits">
     <h3>Límites de esta herramienta (léelo)</h3>
     <ul>${r.limitations.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
   </section>`;
@@ -1179,6 +1180,23 @@ document.addEventListener("keydown", (ev) => {
 document.addEventListener("click", (ev) => {
   if (ev.target.id === "btnAnalyze") analyze();
 });
+
+if (window.Shell) {
+  Shell.init({
+    page: "draft", always: true, inside: true, container: ["main", "#results"],
+    map: {
+      inicio: ["composer", "conf", "items"],
+      inteligencia: ["conf", "analysis", "limits"],
+      economia: ["items"],
+      campeones: ["composer", "enemies", "allies"],
+      objetos: ["items", "runes", "enemies"],
+      simulaciones: ["analysis"],
+      datos: ["limits", "conf"],
+      historial: ["learning"],
+      diagnostico: [],
+    },
+  });
+}
 
 (async function init() {
   const ready = await loadMeta();

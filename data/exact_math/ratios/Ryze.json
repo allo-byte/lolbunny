@@ -1,0 +1,131 @@
+{
+  "champion_id": "Ryze",
+  "champion_name": "Ryze",
+  "patch": "16.21.1",
+  "skills": {
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Ryze",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        11,
+        10.5,
+        10,
+        9.5,
+        9
+      ],
+      "cost": [
+        50,
+        60,
+        70,
+        80,
+        90
+      ],
+      "range": [
+        615,
+        615,
+        615,
+        615,
+        615
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Ryze",
+      "ratios": {},
+      "base_damage": [
+        80.0,
+        90.0,
+        100.0,
+        110.0,
+        120.0
+      ],
+      "cooldown": [
+        3.5,
+        3.25,
+        3,
+        2.75,
+        2.5
+      ],
+      "cost": [
+        40,
+        50,
+        60,
+        70,
+        80
+      ],
+      "range": [
+        615,
+        615,
+        615,
+        615,
+        615
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Ryze",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        180,
+        160,
+        140
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        3000,
+        3000,
+        3000
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Ryze",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

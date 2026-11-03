@@ -109,7 +109,7 @@ def slots_block(plan, live):
                         reason=(f"Cámbialo: {swap['name']} rinde +{swap['gain_main']}% contra {rival}"
                                 f" y {swap['gain_team']:+d}% contra el equipo."
                                 f" Diferencia de coste: {swap['cost']}g ({falta})."),
-                        swap={k: swap[k] for k in ("id", "name", "icon", "price", "gain_main", "gain_team", "cost", "missing")})
+                        swap={k: swap.get(k) for k in ("id", "name", "icon", "price", "gain_main", "gain_team", "cost", "missing", "viability")})
         elif status == "deja":
             extra = f" (mejor alternativa: {swap['name']}, +{swap['gain_main']}%)" if swap else ""
             slot.update(action="keep", reason=f"Déjalo: se podría mejorar poco y no compensa el coste{extra}.")
@@ -123,7 +123,7 @@ def slots_block(plan, live):
     if buy:
         for s in slots:
             if s["action"] == "empty":
-                s["swap"] = {k: buy.get(k) for k in ("id", "name", "icon", "net_cost", "missing", "gain_pct")}
+                s["swap"] = {k: buy.get(k) for k in ("id", "name", "icon", "net_cost", "missing", "gain_pct", "viability")}
                 s["reason"] = (f"Compra {buy['name']}: +{buy.get('gain_pct', 0)}% a tu duelo"
                                f" ({'ya te alcanza' if (buy.get('missing') or 0) <= 0 else 'te faltan ' + str(buy['missing']) + 'g'}).")
                 break

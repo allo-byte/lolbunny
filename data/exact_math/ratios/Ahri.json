@@ -1,0 +1,200 @@
+{
+  "champion_id": "Ahri",
+  "champion_name": "Ahri",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Ahri",
+      "ratios": {
+        "ap_ratio": [
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4
+        ]
+      },
+      "base_damage": [
+        40,
+        70,
+        100,
+        130,
+        160
+      ],
+      "cooldown": [
+        7,
+        6.5,
+        6,
+        5.5,
+        5
+      ],
+      "cost": [
+        55,
+        60,
+        65,
+        70,
+        75
+      ],
+      "range": [
+        880,
+        880,
+        880,
+        880,
+        880
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Ahri",
+      "ratios": {
+        "ap_ratio": [
+          0.45,
+          0.45,
+          0.45,
+          0.45,
+          0.45
+        ]
+      },
+      "base_damage": [
+        65,
+        100,
+        135,
+        170,
+        205
+      ],
+      "cooldown": [
+        8,
+        7.5,
+        7,
+        6.5,
+        6
+      ],
+      "cost": [
+        45,
+        50,
+        55,
+        60,
+        65
+      ],
+      "range": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Ahri",
+      "ratios": {
+        "ap_ratio": [
+          0.6,
+          0.6,
+          0.6,
+          0.6,
+          0.6
+        ]
+      },
+      "base_damage": [
+        60,
+        105,
+        150,
+        195,
+        240
+      ],
+      "cooldown": [
+        12,
+        11.5,
+        11,
+        10.5,
+        10
+      ],
+      "cost": [
+        60,
+        70,
+        80,
+        90,
+        100
+      ],
+      "range": [
+        975,
+        975,
+        975,
+        975,
+        975
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Ahri",
+      "ratios": {
+        "ap_ratio": [
+          0.3,
+          0.3,
+          0.3
+        ]
+      },
+      "base_damage": [
+        70,
+        115,
+        160
+      ],
+      "cooldown": [
+        110,
+        95,
+        80
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        450,
+        450,
+        450
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Ahri",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    }
+  }
+}

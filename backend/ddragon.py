@@ -373,7 +373,15 @@ class DDragon:
         it = self.item(item_id)
         if not it:
             return {}
-        return it.get("stats") or {}
+        base = it.get("stats") or {}
+        # Penetración, letalidad, celeridad, etc. solo existen en la descripción
+        # oficial (ver itemstats.py). Se AÑADEN sin pisar nada del bloque legacy.
+        try:
+            from . import itemstats
+
+            return itemstats.enriched_stats(base, it.get("description"))
+        except Exception:
+            return base
 
     def champ_tags(self, name):
         c = self.champ_by_name(name)

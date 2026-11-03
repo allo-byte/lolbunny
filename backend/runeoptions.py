@@ -38,6 +38,16 @@ REASON_RULES = (
     ("Press the Attack", "sustain", 1, "duelistas que se curan: el daño de la keystone se mantiene"),
     ("Hail of Blades", "sustain", 1, "saca ventaja en peleas largas a baja vida"),
     ("Fleet Footwork", "sustain", 1, "aguanta la pelea y se cura al ir la duración"),
+    # NUEVAS reglas contra objetos del rival
+    ("Second Wind", "lethality", 2, "rival con letalidad: regeneración contra poke letal"),
+    ("Bone Plating", "burst", 1, "burst enemigo alto: reduce el combo inicial"),
+    ("Conditioning", "tanky", 2, "muchos tanques: escalado de resistencias para late"),
+    ("Overgrowth", "hp_true", 1, "daño % vida o verdadero: vida máxima extra"),
+    ("Unflinching", "cc", 3, "mucho CC duro: tenacidad extra y lentitud reducida"),
+    ("Nullifying Orb", "ap", 3, "daño mágico dominante: escudo contra burst AP"),
+    ("Magical Footwear", "early", 1, "partida pasiva: botas gratis y oro ahorrado"),
+    ("Approach Velocity", "mobility", 2, "rivales con dash/blink: velocidad hacia ellos"),
+    ("Presence of Mind", "mana", 2, "gastas mucho maná: regeneración en peleas largas"),
 )
 
 

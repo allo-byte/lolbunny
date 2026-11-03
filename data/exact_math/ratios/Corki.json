@@ -1,0 +1,22 @@
+{
+  "champion_id": "Corki",
+  "champion_name": "Corki",
+  "patch": "16.21.1",
+  "skills": {
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Corki",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "true",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

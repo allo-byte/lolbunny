@@ -2,6 +2,28 @@ LoL Build Advisor · ahora con **analizador de composición**
 
 Esta versión añade una pantalla principal para obtener recomendaciones de runas e ítems para una composición concreta. La premisa: dar ventaja sobre el rival explicando por qué cada decisión y mostrando la calidad de los datos (no probabilidad de victoria).
 
+## Estructura de carpetas
+```
+bunnylol/
+├─ Iniciar.bat          ← abre la app (doble clic)
+├─ iPad.bat             ← abre la app y te da el enlace para el iPad
+├─ Permitir-en-iPad.bat ← abre el puerto en el firewall (lo llama iPad.bat)
+├─ app.py               ← punto de entrada
+├─ updater.py           ← autoactualización desde GitHub
+├─ requirements.txt
+├─ backend/             ← motor (mapa en backend/LEEME_MAPA.md)
+├─ ui/                  ← pantallas (draft = analizador, overlay = en partida)
+├─ data/exact_math/
+│  ├─ ratios/           ← un JSON por campeón
+│  └─ reportes/         ← informes de cada población de ratios
+├─ tests/               ← pruebas (python -m pytest tests)
+├─ docs/                ← ACTUALIZACIONES.md, INFORME_CAMBIOS.md
+├─ herramientas/        ← launchers antiguos, puente iPad, scripts de simulación
+├─ datos_muestra/       ← respuestas de ejemplo (U.GG); no las usa la app
+├─ _archivo/            ← copias viejas guardadas por si acaso
+└─ cache/               ← se crea sola: ajustes, diario, logs (no se sube a GitHub)
+```
+
 ## Qué funciona ahora
 - **Pantalla principal `/`**: selecciona tu campeón, posición, estilo, aliados, rivales (marca el contrincante de línea con ★), rango/región y pulsa "Analizar partida".
 - **Runas**: página recomendada con winrate y muestra reales de U.GG (cuando los hay). Alternativas en otros rangos y ajustes situacionales (**reglas, sin winrate**) con explicación.
@@ -19,10 +41,11 @@ Esta versión añade una pantalla principal para obtener recomendaciones de runa
 
 ## Uso
 ```powershell
-cd lol-build-advisor
+cd bunnylol
 pip install -r requirements.txt
 python app.py
 ```
+O doble clic en `Iniciar.bat` (Windows).
 Abre `http://127.0.0.1:8765/` (analizador de composición). `http://127.0.0.1:8765/overlay` (overlay en vivo).
 
 En modo demo: `python app.py --mock` o `python app.py --browser` (abre overlay en navegador).
@@ -53,7 +76,7 @@ En modo demo: `python app.py --mock` o `python app.py --browser` (abre overlay e
 - **No se actualiza solo**: las listas manuales de campeones (curas, escudos, CC, asesinos…) y el propio código de la app. Esas se revisan a mano cuando haya campeones nuevos o reworks.
 
 ## Autoactualización del código (`updater.py`)
-La app puede bajar sola las versiones nuevas desde tu repositorio de GitHub. Pasos en `ACTUALIZACIONES.md`.
+La app puede bajar sola las versiones nuevas desde tu repositorio de GitHub. Pasos en `docs/ACTUALIZACIONES.md`.
 
 ## Igualar al rival (`backend/parity.py`)
 En partida, compara tu duelo con cada rival usando SUS objetos reales y te dice qué comprar ahora para igualar o superarlo, revisando TODO el catálogo (AD, AP, híbridos AD+AP y defensa) y mostrando lo mejor de cada tipo (bloque verde "COMPRA ESTO", arriba del todo). Detalles en el docstring del módulo. Pruebas: `python tests/test_parity.py`.
@@ -77,3 +100,16 @@ Un solo bloque arriba del overlay con:
 
 En la pantalla de draft (`/`), cada campeón elegido muestra su línea probable (`/api/lanes`). Si ya marcaste tu posición, esa manda.
 Pruebas: `python tests/test_mygame.py`.
+
+## Rediseño visual (tema rosado, iPad) y Ajustes → «Apariencia y colores»
+- Nuevos archivos: `ui/theme.js` (tema + persistencia), `ui/shell.js` + `ui/shell.css` (barra superior, navegación lateral de 11 apartados, barra de estado). `app.css`/`draft.css` ahora leen sus colores de variables del tema.
+- Temas: **Rosado** (por defecto, `#ED8FBD`), **Negro** y **Color personalizado** (selector + HEX validado). Se guarda en `cache/settings.json` (clave `appearance`) y en el navegador; el iPad ve el mismo tema que el PC.
+- Diseño ancho (iPad, navegador, escritorio): navegación lateral (iPad vertical y móvil: menú plegable). El overlay compacto de 380 px dentro del juego conserva su diseño, solo con los colores del tema.
+- Cada apartado solo muestra/oculta las tarjetas reales existentes; las que no estén asignadas aparecen en «Inteligencia». La búsqueda superior filtra todas las tarjetas.
+- Los colores semánticos (verde/rojo/naranja) no cambian con el tema.
+
+## Inicio, enfrentamientos y viabilidad
+- **Inicio**: «Mi partida» (campeón, nivel, oro, kills, muertes, asistencias, CS, minuto), build recomendada con la siguiente compra y «Recomendaciones clave» (máx. 4, con enlace a cada apartado).
+- **Campeones y enfrentamientos**: rivales ordenados TOP / JUNGLE / MID / ADC / SUPPORT, tu campeón y tu build, y el botón **Analizar enfrentamiento** (`POST /api/matchup` → `backend/matchup.py`): tu build real contra cada rival y contra su composición, con qué objetos cambiar, conservar y comprar, y el porqué. Se recalcula con la partida actual (no hay builds fijas); vuelve a pulsarlo tras comprar.
+- **Viabilidad** (`backend/viability.py`): % por objeto = beneficio contra tu rival 35 % + contra el equipo 25 % + oro 20 % + fase 10 % + encaje con tu campeón 10 %. «USA ESTA» = la mejor (≥ 50 %); «NO RECOMENDADA» = < 40 % o no mejora nada. No es probabilidad de ganar.
+- Pruebas: `python tests/test_viability_matchup.py`.

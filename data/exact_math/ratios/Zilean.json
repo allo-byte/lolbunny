@@ -1,0 +1,100 @@
+{
+  "champion_id": "Zilean",
+  "champion_name": "Zilean",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Zilean",
+      "ratios": {},
+      "base_damage": [
+        75.0,
+        115.0,
+        165.0,
+        230.0,
+        300.0
+      ],
+      "cooldown": [
+        10,
+        9.5,
+        9,
+        8.5,
+        8
+      ],
+      "cost": [
+        60,
+        65,
+        70,
+        75,
+        80
+      ],
+      "range": [
+        900,
+        900,
+        900,
+        900,
+        900
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Zilean",
+      "ratios": {},
+      "base_damage": [
+        20.0,
+        30.0,
+        40.0,
+        50.0,
+        60.0
+      ],
+      "cooldown": [
+        14,
+        12,
+        10,
+        8,
+        6
+      ],
+      "cost": [
+        35,
+        35,
+        35,
+        35,
+        35
+      ],
+      "range": [
+        600,
+        600,
+        600,
+        600,
+        600
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Zilean",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

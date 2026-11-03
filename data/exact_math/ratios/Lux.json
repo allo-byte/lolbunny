@@ -1,0 +1,53 @@
+{
+  "champion_id": "Lux",
+  "champion_name": "Lux",
+  "patch": "16.21.1",
+  "skills": {
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Lux",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        60,
+        50,
+        40
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        3340,
+        3340,
+        3340
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Lux",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

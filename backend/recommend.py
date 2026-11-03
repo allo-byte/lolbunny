@@ -1,13 +1,16 @@
+import copy
 import threading
 import time
 import os
 
+from . import aiadvisor
 from . import archetypes
 from . import config
 from . import coach
 from . import counterplan
 from . import burn
 from . import earlyitem
+from . import earlygold
 from . import lowgold
 from . import patchdiff
 from . import trend
@@ -92,8 +95,11 @@ class Advisor:
         self._preview_key = None
         self._preview_since = 0.0
         self.last_update = time.time()
-        self._last_matchups_shown = -1
-        self._last_mu_tag = ""
+        # Capa de IA externa (opcional) y memoria del último «Analizar enfrentamiento».
+        self.ai = aiadvisor.AILayer()
+        self._mu_cache = None            # (firma de la partida, resultado base sin IA)
+        self._mu_out = None              # (clave, resultado final con IA) para no rehacer nada si no cambió
+        self._ai_cat = None              # (versión del parche, catálogo compacto de objetos para la IA)
         # Opciones de runas calculadas al vuelo (con caché propia y TTL corto).
         self._rune_opts_cache = None
         self._rune_opts_key = None
@@ -279,6 +285,11 @@ class Advisor:
             _log(f"[advisor] build en vivo falló: {e!r}")
             st["parity"] = None
         try:
+            st["team_advantage"] = self._team_advantage()
+        except Exception as e:
+            _log(f"[advisor] team_advantage falló: {e!r}")
+            st["team_advantage"] = None
+        try:
             self._tag_lanes(st)
         except Exception as e:
             _log(f"[advisor] líneas de los jugadores: {e!r}")
@@ -318,6 +329,121 @@ class Advisor:
         if st["mygame"] and st.get("champ") is not None:
             st["my_lane"] = st["mygame"].get("lane")
 
+    def analyze_matchup(self, force=True):
+        """Envoltorio a prueba de caídas: un fallo aquí nunca debe tumbar el servidor ni la pantalla."""
+        try:
+            return self._analyze_matchup(force)
+        except Exception as e:
+            print(f"[matchup] fallo controlado: {e!r}")
+            memo = self._mu_out
+            if memo:                                    # mejor mostrar lo último bueno que nada
+                return memo[1]
+            return {"ok": False, "error": "El análisis falló un momento (" + type(e).__name__ + "). Reintenta."}
+
+    def _analyze_matchup(self, force=True):
+        """«Analizar enfrentamiento»: tu build real contra cada rival y su composición.
+        Usa la partida en vivo y el plan de U.GG vigente; no guarda nada.
+
+        Con force=False (refresco en tiempo real) solo recalcula el motor si la partida cambió
+        (nivel, tramo de oro, objetos tuyos o de los rivales); si no, reutiliza el resultado
+        anterior y solo refresca la capa de IA. La IA nunca bloquea ni rompe el análisis base."""
+        from . import lanerival, matchup
+
+        live = self.last_live
+        if self.phase != "in_game" or not live or not live.get("players"):
+            return {"ok": False, "error": "No hay una partida en curso."}
+        sig = aiadvisor.live_signature(live)
+        cached = self._mu_cache
+        if not force and cached and cached[0] == sig:
+            base = cached[1]
+        else:
+            with self._lock:
+                overview = self.overview
+            cfg = config.load_settings()
+            cfg["mode_api"] = MODES.get(cfg.get("mode", "ranked"), MODES["ranked"])[1]
+            rows = lanerival.lanes(live, parity.find_champ, cfg)
+            base = matchup.analyze(live, overview, rows)
+            self._mu_cache = (sig, base) if base.get("ok") else None
+        if not base.get("ok"):
+            return base
+        settings = config.load_settings()
+        key = (sig, self.ai.fingerprint(settings))
+        memo = self._mu_out
+        if not force and memo and memo[0] == key:
+            return memo[1]                              # nada cambió: cero cálculo, cero copias
+        out = copy.deepcopy(base)                       # la base queda intacta; la IA trabaja sobre la copia
+        out = self.ai.enrich(live, out, settings, self._ai_tools(settings))
+        # Solo se memoriza lo definitivo: mientras la IA piensa o falla hay que seguir reintentando.
+        st = (out.get("ai") or {}).get("status")
+        self._mu_out = (key, out) if st in ("ok", "off") else None
+        return out
+
+    _STAT_ABBR = {
+        "FlatPhysicalDamageMod": "AD", "FlatMagicDamageMod": "AP", "FlatHPPoolMod": "Vida", "FlatArmorMod": "Arm",
+        "FlatSpellBlockMod": "RM", "PercentAttackSpeedMod": "VA", "FlatCritChanceMod": "Crit",
+        "FlatMovementSpeedMod": "VM", "FlatMPPoolMod": "Maná", "FlatHPRegenMod": "RegVida", "FlatMPRegenMod": "RegManá",
+        "PercentLifeStealMod": "RoboVida", "FlatArmorPenetrationMod": "PenArm", "FlatMagicPenetrationMod": "PenMág",
+    }
+
+    @staticmethod
+    def _item_parts(iid, owned_ids):
+        """Componentes directos de un objeto que aún no tienes (para decir qué comprar YA con el oro que sobra)."""
+        items = getattr(ddragon, "items", None) or {}
+        out = []
+        for cid in (items.get(str(iid)) or {}).get("from") or []:
+            cid = int(cid)
+            if cid in owned_ids:
+                continue
+            c = items.get(str(cid)) or {}
+            info = itemrules.item_info(cid) or {}
+            out.append({"id": cid, "name": info.get("name") or c.get("name"), "icon": info.get("icon"),
+                        "price": int((c.get("gold") or {}).get("total") or 0)})
+        return out
+
+    def _ai_tools(self, settings):
+        """Herramientas para la capa de IA: catálogo cerrado de objetos reales, nombre/icono y coste neto.
+        El catálogo solo se arma si la IA está activa y se cachea por versión de parche."""
+        tools = {"info": itemrules.item_info, "cost": parity.net_cost, "parts": self._item_parts}
+        if not aiadvisor.resolve_config(settings):
+            return tools
+        ver = ddragon.version
+        if not (self._ai_cat and self._ai_cat[0] == ver):
+            cat = []
+            for iid, it in (getattr(ddragon, "items", None) or {}).items():
+                try:
+                    g = it.get("gold") or {}
+                    tags = set(it.get("tags") or [])
+                    price = int(g.get("total") or 0)
+                    boots = "Boots" in tags
+                    if (not g.get("purchasable") or it.get("into") or not (it.get("maps") or {}).get("11")
+                            or not it.get("name") or tags & {"Consumable", "Trinket"} or it.get("requiredChampion")
+                            or it.get("requiredAlly") or it.get("inStore") is False
+                            or (price < 1000 and not boots)):
+                        continue
+                    stats = ",".join(f"{self._STAT_ABBR[k]}{int(v) if float(v) >= 1 else round(float(v) * 100)}"
+                                     f"{'' if float(v) >= 1 else '%'}"
+                                     for k, v in (it.get("stats") or {}).items() if k in self._STAT_ABBR and v)
+                    cat.append({"id": int(iid), "nombre": it["name"], "precio": price, "bota": boots,
+                                "tipo": "botas" if boots else "/".join(sorted(tags))[:40], "stats": stats})
+                except Exception:
+                    continue
+            cat.sort(key=lambda c: c["nombre"])
+            self._ai_cat = (ver, cat[:160])
+        tools["catalog"] = self._ai_cat[1]
+        return tools
+
+    def matchup_live(self):
+        """Refresco barato para la UI (cada pocos segundos): reutiliza lo calculado si nada cambió."""
+        return self.analyze_matchup(force=False)
+
+    def ai_status(self):
+        return self.ai.status(config.load_settings())
+
+    def ai_set_opinion(self, text):
+        """Opinión de otra IA pegada a mano (Grok, etc.). Texto vacío = borrarla."""
+        self.ai.opinion.set(text)
+        return {"ok": True, "active": bool(self.ai.opinion.live())}
+
     def _live_build(self):
         live = self.last_live
         if self.phase != "in_game" or not live or not live.get("players"):
@@ -342,6 +468,31 @@ class Advisor:
         rival = lane["rival"] if lane else burn._pick_rival(live)
         out = parity.plan(live, overview, me_prof, enemy_profs, rival, lane_info=lane)
         return out
+
+    def _team_advantage(self):
+        """Ventaja global contra todo el equipo rival con tus objetos actuales."""
+        live = self.last_live
+        if self.phase != "in_game" or not live or not live.get("players"):
+            return None
+        me_champ = parity.find_champ(live.get("champion"), live.get("champion_id"))
+        if not me_champ:
+            return None
+        level = int(live.get("level") or 1)
+        owned = [int(i) for i in (live.get("items") or [])]
+        model = parity.MeModel(me_champ, level, owned, live.get("stats"))
+        me_stats = model.stats(owned)
+        enemy_models = []
+        for p in live["players"]:
+            if p.get("mine"):
+                continue
+            ch = parity.find_champ(p.get("champion"), p.get("champion_id"))
+            if not ch:
+                continue
+            rv_items = [int(i) for i in (p.get("items") or [])]
+            rv = parity.unit_stats(ch, int(p.get("level") or 1), rv_items)
+            rv["name"] = ch["name"]
+            enemy_models.append(rv)
+        return parity.team_advantage(me_stats, enemy_models)
 
     def _state_raw(self):
         settings = config.load_settings()
@@ -477,6 +628,14 @@ class Advisor:
         state["dmg_focus"] = self._dmg_focus_state(
             champ, enemy_champs_now, me_is_ap_early
         )
+
+        # Qué comprar según el oro (tramos Early / Transición / Mid): 1-2 objetos sin redundancia.
+        try:
+            state["early_gold"] = earlygold.build(
+                champ, enemy_champs_now, live if self.phase == "in_game" else None)
+        except Exception as e:
+            _log(f"[advisor] early_gold falló: {e!r}")
+            state["early_gold"] = None
 
         if not overview:
             if state["status"] == "ready":
@@ -643,6 +802,7 @@ class Advisor:
                 "gold": live.get("gold", 0),
                 "level": live.get("level", 0),
                 "time": fmt_time(live.get("game_time", 0)),
+                "time_s": live.get("game_time", 0),
                 "kda": live.get("kda"),
                 "items": live.get("items", []),
                 "team_scores": live.get("team_scores"),

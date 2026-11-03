@@ -1,0 +1,139 @@
+{
+  "champion_id": "Thresh",
+  "champion_name": "Thresh",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Thresh",
+      "ratios": {},
+      "base_damage": [
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0
+      ],
+      "cooldown": [
+        19,
+        16.5,
+        14,
+        11.5,
+        9
+      ],
+      "cost": [
+        70,
+        70,
+        70,
+        70,
+        70
+      ],
+      "range": [
+        1075,
+        1075,
+        1075,
+        1075,
+        1075
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Thresh",
+      "ratios": {},
+      "base_damage": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "cooldown": [
+        21,
+        20,
+        19,
+        18,
+        17
+      ],
+      "cost": [
+        50,
+        55,
+        60,
+        65,
+        70
+      ],
+      "range": [
+        950,
+        950,
+        950,
+        950,
+        950
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Thresh",
+      "ratios": {},
+      "base_damage": [
+        75.0,
+        120.0,
+        165.0,
+        210.0,
+        255.0
+      ],
+      "cooldown": [
+        13,
+        12.25,
+        11.5,
+        10.75,
+        10
+      ],
+      "cost": [
+        60,
+        65,
+        70,
+        75,
+        80
+      ],
+      "range": [
+        500,
+        500,
+        500,
+        500,
+        500
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Thresh",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

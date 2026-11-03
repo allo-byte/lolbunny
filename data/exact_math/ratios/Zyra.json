@@ -1,0 +1,170 @@
+{
+  "champion_id": "Zyra",
+  "champion_name": "Zyra",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Zyra",
+      "ratios": {},
+      "base_damage": [
+        60.0,
+        100.0,
+        140.0,
+        180.0,
+        220.0
+      ],
+      "cooldown": [
+        7,
+        6.5,
+        6,
+        5.5,
+        5
+      ],
+      "cost": [
+        55,
+        55,
+        55,
+        55,
+        55
+      ],
+      "range": [
+        800,
+        800,
+        800,
+        800,
+        800
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Zyra",
+      "ratios": {},
+      "base_damage": [
+        0.35,
+        0.35,
+        0.35,
+        0.35,
+        0.35
+      ],
+      "cooldown": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "cost": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "range": [
+        850,
+        850,
+        850,
+        850,
+        850
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Zyra",
+      "ratios": {},
+      "base_damage": [
+        60.0,
+        95.0,
+        130.0,
+        165.0,
+        200.0
+      ],
+      "cooldown": [
+        11,
+        11,
+        11,
+        11,
+        11
+      ],
+      "cost": [
+        70,
+        75,
+        80,
+        85,
+        90
+      ],
+      "range": [
+        1100,
+        1100,
+        1100,
+        1100,
+        1100
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Zyra",
+      "ratios": {},
+      "base_damage": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "cooldown": [
+        110,
+        100,
+        90
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        700,
+        700,
+        700
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Zyra",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

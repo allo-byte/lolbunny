@@ -1,0 +1,186 @@
+{
+  "champion_id": "Zed",
+  "champion_name": "Zed",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Zed",
+      "ratios": {
+        "ad_ratio": [
+          0.9,
+          0.9,
+          0.9,
+          0.9,
+          0.9
+        ]
+      },
+      "base_damage": [
+        80,
+        110,
+        140,
+        170,
+        200
+      ],
+      "cooldown": [
+        6,
+        5.5,
+        5,
+        4.5,
+        4
+      ],
+      "cost": [
+        75,
+        70,
+        65,
+        60,
+        55
+      ],
+      "range": [
+        925,
+        925,
+        925,
+        925,
+        925
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Zed",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [
+        22,
+        20.5,
+        19,
+        17.5,
+        16
+      ],
+      "cost": [
+        75,
+        70,
+        65,
+        60,
+        55
+      ],
+      "range": [
+        650,
+        650,
+        650,
+        650,
+        650
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Zed",
+      "ratios": {
+        "ad_ratio": [
+          0.8,
+          0.8,
+          0.8,
+          0.8,
+          0.8
+        ]
+      },
+      "base_damage": [
+        60,
+        85,
+        110,
+        135,
+        160
+      ],
+      "cooldown": [
+        9,
+        8,
+        7,
+        6,
+        5
+      ],
+      "cost": [
+        50,
+        55,
+        60,
+        65,
+        70
+      ],
+      "range": [
+        290,
+        290,
+        290,
+        290,
+        290
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Zed",
+      "ratios": {
+        "ad_ratio": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "base_damage": [
+        125,
+        225,
+        325
+      ],
+      "cooldown": [
+        120,
+        100,
+        80
+      ],
+      "cost": [
+        0,
+        0,
+        0
+      ],
+      "range": [
+        625,
+        625,
+        625
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Zed",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    }
+  }
+}

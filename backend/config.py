@@ -36,6 +36,8 @@ DEFAULT_SETTINGS = {
     "update_repo": "",
     "update_branch": "main",
     "auto_update": True,
+    # Tema de la interfaz (ver ui/theme.js): mode = pink | black | custom.
+    "appearance": {"mode": "pink", "custom": "#FF69B4"},
 }
 
 HOTKEY_STATUS = {}

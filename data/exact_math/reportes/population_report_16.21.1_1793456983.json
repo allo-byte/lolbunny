@@ -1,0 +1,34 @@
+{
+  "success": 3,
+  "failed": 0,
+  "skipped": 0,
+  "champions": {
+    "Jinx": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "LeeSin": {
+      "status": "success",
+      "skills": [
+        "R",
+        "P"
+      ]
+    },
+    "Syndra": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    }
+  }
+}

@@ -118,19 +118,37 @@ def _option_with_data(pid, stat):
     return out
 
 
-def situational(enemy_profs, me_prof):
+def situational(enemy_profs, me_prof, phase="mid", gold=0, team_adv=None):
     """Mascota que encaja con ESTA partida (regla, sin winrate).
 
     Solo usa los efectos oficiales de cada mascota y el perfil de la
     composición. Se etiqueta como regla: no hay datos por situación.
+    
+    Factores añadidos:
+      - phase: early/mid/late (temprano buscas gank, late buscas peleas)
+      - gold: oro disponible (early game con poco oro)
+      - team_adv: ventaja global del equipo (si vas por detrás, más defensiva)
     """
     profs = [p for p in (enemy_profs or []) if isinstance(p, dict)]
     if not profs:
         return None
     me = me_prof or {}
     mobile = [p["name"] for p in profs if (p.get("mobility") or 0) > 0]
+    cc_heavy = sum(1 for p in profs if (p.get("hard_cc") or p.get("cc")) or p.get("name") in ["Malzahar", "Morgana", "Leona", "Nautilus", "Sejuani", "Ashe", "Amumu"])
+    tanky = sum(1 for p in profs if p.get("tank"))
+    sustain = sum(1 for p in profs if p.get("sustain") or p.get("name") in ["Warwick", "Olaf", "Darius", "Mundo", "Aatrox", "Swain", "Vladimir", "Aatrox"])
+    ap_heavy = sum(1 for p in profs if p.get("damage_type") == "mágico")
+    ad_heavy = sum(1 for p in profs if p.get("damage_type") == "físico")
     tags = set(me.get("tags") or [])
-
+    is_tank = me.get("tank") or "Tank" in tags
+    is_assassin = me.get("assassin") or "Assassin" in tags
+    is_fighter = me.get("fighter") or "Fighter" in tags
+    is_ap = me.get("mage") or "Mage" in tags
+    
+    # Ventaja del equipo
+    behind = team_adv and team_adv.get("verdict") == "detras"
+    ahead = team_adv and team_adv.get("verdict") == "delante"
+    
     def out(pid, why, rule):
         opt = _option(pid)
         return {
@@ -143,33 +161,42 @@ def situational(enemy_profs, me_prof):
             "source": "regla (sin winrate)",
         }
 
-    if me.get("tank"):
-        return out(
-            1103,
-            "Tu campeón es tanque: el escudo aguanta el primer intercambio "
-            "y mantiene la jungla sana.",
-            "campeon_tanque",
-        )
+    # Early game: prioriza ganks y rotaciones
+    if phase == "early":
+        if len(mobile) >= 2 or cc_heavy >= 2:
+            return out(1101, f"Early: {len(mobile)} móviles + {cc_heavy} CC fuerte: la ralentización asegura ganks tempranos.", "early_gank")
+        if gold < 1000:
+            return out(1102, f"Early con poco oro ({gold}g): velocidad en maleza para rotar y farmear eficiente.", "early_rotation")
+    
+    # Behind: más defensiva / supervivencia
+    if behind:
+        if is_tank or tanky >= 2:
+            return out(1103, "Vas por detrás + rivales tanques: el escudo fuera de combate te mantiene vivo en peleas.", "behind_tank")
+        if sustain >= 2:
+            return out(1103, "Vas por detrás + rivales con mucho sustain: el escudo aguanta el poke y curas.", "behind_sustain")
+    
+    # Ahead: más agresiva / snowball
+    if ahead:
+        if is_assassin or is_fighter:
+            return out(1101, "Vas por delante + campeón de daño: la quemadura + ralentización maximiza el snowball.", "ahead_snowball")
+    
+    # Late game: peleas de equipo
+    if phase == "late":
+        if ap_heavy >= 3:
+            return out(1103, f"Late + {ap_heavy} AP enemigos: el escudo mitiga burst mágico en teamfights.", "late_ap")
+        if ad_heavy >= 3:
+            return out(1101, f"Late + {ad_heavy} AD enemigos: la ralentización kitea autoataques en peleas largas.", "late_ad")
+        if tanky >= 2:
+            return out(1101, f"Late + {tanky} tanques: la ralentización ayuda a kitear y quemar vida máxima.", "late_tank")
+    
+    # Reglas base originales
+    if is_tank:
+        return out(1103, "Tu campeón es tanque: el escudo aguanta el primer intercambio y mantiene la jungla sana.", "campeon_tanque")
     if len(mobile) >= 3:
-        return out(
-            1101,
-            f"{len(mobile)} rivales con dash/blink ({', '.join(mobile[:3])}): "
-            "la ralentización te ayuda a alcanzarlos y a que no escapen.",
-            "movilidad_rival",
-        )
+        return out(1101, f"{len(mobile)} rivales con dash/blink ({', '.join(mobile[:3])}): la ralentización te ayuda a alcanzarlos y a que no escapen.", "movilidad_rival")
     if tags & {"Assassin", "Fighter", "Marksman"}:
-        return out(
-            1101,
-            "Tu campeón pega y busca pelea: la quemadura + ralentización "
-            "le da más duelo y agarre.",
-            "campeon_danio",
-        )
-    return out(
-        1102,
-        "Sin condición fuerte en la partida: la velocidad en maleza te da "
-        "tempo para rotar y gankear.",
-        "sin_condicion",
-    )
+        return out(1101, "Tu campeón pega y busca pelea: la quemadura + ralentización le da más duelo y agarre.", "campeon_danio")
+    return out(1102, "Sin condición fuerte en la partida: la velocidad en maleza te da tempo para rotar y gankear.", "sin_condicion")
 
 
 def recommend(champ_name, champ_key, mode_api, overview, role, enemy_profs=None, me_prof=None):
@@ -192,7 +219,45 @@ def recommend(champ_name, champ_key, mode_api, overview, role, enemy_profs=None,
     patch = overview.get("patch") if overview else None
     start_stats = (overview or {}).get("starting_stats") or {}
     role_label = ROLE_NAMES.get(str(role), str(role))
-    situation = situational(enemy_profs, me_prof)
+    
+    # Extraer fase del juego, oro y ventaja del equipo del overview
+    live = overview or {}
+    game_time = float(live.get("game_time", 0) or 0) / 60.0
+    if game_time < 14:
+        phase = "early"
+    elif game_time < 25:
+        phase = "mid"
+    else:
+        phase = "late"
+    gold = int(live.get("gold", 0) or 0)
+    
+    # Calcular ventaja del equipo si hay datos de rivales
+    team_adv = None
+    if enemy_profs:
+        try:
+            from . import parity
+            me_champ = parity.find_champ(live.get("champion"), live.get("champion_id"))
+            if me_champ:
+                level = int(live.get("level") or 1)
+                owned = [int(i) for i in (live.get("items") or [])]
+                model = parity.MeModel(me_champ, level, owned, live.get("stats"))
+                me_stats = model.stats(owned)
+                enemy_models = []
+                for p in live.get("players", []):
+                    if p.get("mine"):
+                        continue
+                    ch = parity.find_champ(p.get("champion"), p.get("champion_id"))
+                    if ch:
+                        rv_items = [int(i) for i in (p.get("items") or [])]
+                        rv = parity.unit_stats(ch, int(p.get("level") or 1), rv_items)
+                        rv["name"] = ch["name"]
+                        enemy_models.append(rv)
+                if enemy_models:
+                    team_adv = parity.team_advantage(me_stats, enemy_models)
+        except Exception:
+            pass
+    
+    situation = situational(enemy_profs, me_prof, phase=phase, gold=gold, team_adv=team_adv)
 
     if chosen is None:
         pick = situation or {}

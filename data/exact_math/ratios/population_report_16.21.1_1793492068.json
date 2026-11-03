@@ -1,0 +1,1553 @@
+{
+  "success": 173,
+  "failed": 0,
+  "skipped": 0,
+  "champions": {
+    "Aatrox": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Ahri": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Akali": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Akshan": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Alistar": {
+      "status": "success",
+      "skills": [
+        "E",
+        "P"
+      ]
+    },
+    "Ambessa": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Amumu": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Anivia": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Annie": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Aphelios": {
+      "status": "success",
+      "skills": [
+        "W",
+        "R",
+        "P"
+      ]
+    },
+    "Ashe": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "P"
+      ]
+    },
+    "AurelionSol": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Aurora": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Azir": {
+      "status": "success",
+      "skills": [
+        "W",
+        "R",
+        "P"
+      ]
+    },
+    "Bard": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Belveth": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Blitzcrank": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Brand": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Braum": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "P"
+      ]
+    },
+    "Briar": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Caitlyn": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Camille": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Cassiopeia": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Chogath": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Corki": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Darius": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Diana": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "R",
+        "P"
+      ]
+    },
+    "Draven": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "DrMundo": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Ekko": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Elise": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Evelynn": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Ezreal": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Fiddlesticks": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Fiora": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Fizz": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Galio": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Gangplank": {
+      "status": "success",
+      "skills": [
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Garen": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Gnar": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Gragas": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Graves": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Gwen": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Hecarim": {
+      "status": "success",
+      "skills": [
+        "W",
+        "P"
+      ]
+    },
+    "Heimerdinger": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Hwei": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Illaoi": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Irelia": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Ivern": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Janna": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "JarvanIV": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Jax": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Jayce": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Jhin": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Jinx": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Kaisa": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Kalista": {
+      "status": "success",
+      "skills": [
+        "W",
+        "P"
+      ]
+    },
+    "Karma": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "P"
+      ]
+    },
+    "Karthus": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Kassadin": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Katarina": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "R",
+        "P"
+      ]
+    },
+    "Kayle": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Kayn": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Kennen": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Khazix": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Kindred": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "R",
+        "P"
+      ]
+    },
+    "Kled": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "KogMaw": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "P"
+      ]
+    },
+    "KSante": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Leblanc": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "LeeSin": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Leona": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Lillia": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Lissandra": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Locke": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Lucian": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Lulu": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Lux": {
+      "status": "success",
+      "skills": [
+        "R",
+        "P"
+      ]
+    },
+    "Malphite": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Malzahar": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Maokai": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "MasterYi": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Mel": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Milio": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "MissFortune": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "MonkeyKing": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Mordekaiser": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Morgana": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Naafiri": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "R",
+        "E",
+        "W",
+        "P"
+      ]
+    },
+    "Nami": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Nasus": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Nautilus": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Neeko": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Nidalee": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Nilah": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Nocturne": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Nunu": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Olaf": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Orianna": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Ornn": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Pantheon": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Poppy": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Pyke": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Qiyana": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Quinn": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Rakan": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Rammus": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "RekSai": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Rell": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Renata": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Renekton": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Rengar": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Riven": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Rumble": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Ryze": {
+      "status": "success",
+      "skills": [
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Samira": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Sejuani": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Senna": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Seraphine": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Sett": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Shaco": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Shen": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Shyvana": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Singed": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Sion": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Sivir": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Skarner": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Smolder": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Sona": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Soraka": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Swain": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Sylas": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Syndra": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "TahmKench": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "P"
+      ]
+    },
+    "Taliyah": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Talon": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Taric": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Teemo": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Thresh": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "P"
+      ]
+    },
+    "Tristana": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Trundle": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Tryndamere": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "P"
+      ]
+    },
+    "TwistedFate": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Twitch": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Udyr": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Urgot": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Varus": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Vayne": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "Veigar": {
+      "status": "success",
+      "skills": [
+        "R",
+        "P"
+      ]
+    },
+    "Velkoz": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Vex": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Vi": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Viego": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Viktor": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Vladimir": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "E",
+        "P"
+      ]
+    },
+    "Volibear": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Warwick": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Xayah": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Xerath": {
+      "status": "success",
+      "skills": [
+        "P"
+      ]
+    },
+    "XinZhao": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Yasuo": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Yone": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Yorick": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Yunara": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Yuumi": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Zaahen": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Zac": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Zed": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Zeri": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Ziggs": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Zilean": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "P"
+      ]
+    },
+    "Zoe": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    },
+    "Zyra": {
+      "status": "success",
+      "skills": [
+        "Q",
+        "W",
+        "E",
+        "R",
+        "P"
+      ]
+    }
+  }
+}

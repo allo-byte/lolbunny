@@ -1,0 +1,53 @@
+{
+  "champion_id": "Veigar",
+  "champion_name": "Veigar",
+  "patch": "16.21.1",
+  "skills": {
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Veigar",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        120,
+        90,
+        60
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        650,
+        650,
+        650
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Veigar",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

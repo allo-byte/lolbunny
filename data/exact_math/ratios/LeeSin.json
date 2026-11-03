@@ -1,0 +1,207 @@
+{
+  "champion_id": "LeeSin",
+  "champion_name": "LeeSin",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "LeeSin",
+      "ratios": {
+        "ad_ratio": [
+          0.9,
+          1.1,
+          1.3,
+          1.5,
+          1.7
+        ],
+        "missing_hp_ratio": [
+          0.08,
+          0.08,
+          0.08,
+          0.08,
+          0.08
+        ]
+      },
+      "base_damage": [
+        50,
+        85,
+        120,
+        155,
+        190
+      ],
+      "cooldown": [
+        10,
+        9,
+        8,
+        7,
+        6
+      ],
+      "cost": [
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "range": [
+        1100,
+        1100,
+        1100,
+        1100,
+        1100
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "LeeSin",
+      "ratios": {
+        "ap_ratio": [
+          0.8,
+          0.8,
+          0.8,
+          0.8,
+          0.8
+        ]
+      },
+      "base_damage": [
+        70,
+        110,
+        150,
+        190,
+        230
+      ],
+      "cooldown": [
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "cost": [
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "range": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "LeeSin",
+      "ratios": {
+        "ad_ratio": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "base_damage": [
+        55,
+        85,
+        115,
+        145,
+        175
+      ],
+      "cooldown": [
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "cost": [
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "range": [
+        450,
+        450,
+        450,
+        450,
+        450
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "LeeSin",
+      "ratios": {
+        "ad_ratio": [
+          2.0,
+          2.0,
+          2.0
+        ]
+      },
+      "base_damage": [
+        200,
+        400,
+        600
+      ],
+      "cooldown": [
+        110,
+        85,
+        60
+      ],
+      "cost": [
+        0,
+        0,
+        0
+      ],
+      "range": [
+        375,
+        375,
+        375
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "LeeSin",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "manual",
+      "verified": true,
+      "patch": "16.21.1"
+    }
+  }
+}

@@ -150,10 +150,13 @@ def profile(champ_key):
     champ = ddragon.champ_by_key(champ_key)
     if not champ:
         return None
+    # La caché va por PARCHE: si Data Dragon cambia de versión, el perfil se
+    # reconstruye con los textos/estadísticas nuevos en vez de servir el viejo.
     key = str(champ_key)
+    mem_key = f"profile:{ddragon.version}:{key}"
     with _lock:
-        if key in _memory:
-            return _memory[key]
+        if mem_key in _memory:
+            return _memory[mem_key]
 
     stats = champ.get("stats") or {}
     tags = list(champ.get("tags") or [])
@@ -227,7 +230,7 @@ def profile(champ_key):
         "has_texts": bool(texts),
     }
     with _lock:
-        _memory[key] = out
+        _memory[mem_key] = out
     return out
 
 

@@ -1,0 +1,170 @@
+{
+  "champion_id": "Zoe",
+  "champion_name": "Zoe",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Zoe",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        8.5,
+        8,
+        7.5,
+        7,
+        6.5
+      ],
+      "cost": [
+        40,
+        45,
+        50,
+        55,
+        60
+      ],
+      "range": [
+        800,
+        800,
+        800,
+        800,
+        800
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Zoe",
+      "ratios": {},
+      "base_damage": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cooldown": [
+        0.25,
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ],
+      "cost": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "range": [
+        3000,
+        4500,
+        6000,
+        3000,
+        3000
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "E": {
+      "skill_key": "E",
+      "champion_id": "Zoe",
+      "ratios": {},
+      "base_damage": [
+        70.0,
+        110.0,
+        150.0,
+        190.0,
+        230.0
+      ],
+      "cooldown": [
+        18,
+        17,
+        16,
+        15,
+        14
+      ],
+      "cost": [
+        80,
+        80,
+        80,
+        80,
+        80
+      ],
+      "range": [
+        800,
+        800,
+        800,
+        800,
+        800
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Zoe",
+      "ratios": {},
+      "base_damage": [
+        -0.3,
+        -0.4,
+        -0.5
+      ],
+      "cooldown": [
+        11,
+        8,
+        5
+      ],
+      "cost": [
+        40,
+        40,
+        40
+      ],
+      "range": [
+        575,
+        575,
+        575
+      ],
+      "damage_type": "magic",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Zoe",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "magic",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

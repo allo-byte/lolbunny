@@ -5,6 +5,7 @@ import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from . import ai_routes
 from . import config
 from . import draft
 from . import journal
@@ -51,6 +52,7 @@ def _health():
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 30   # una conexión muerta (iPad dormido, wifi cortado) no deja el hilo colgado para siempre
 
     def log_message(self, fmt, *args):
         pass
@@ -105,7 +107,39 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, data, ctype, cache)
 
+    def _ai(self, method):
+        """Rutas de la IA (backend/ai_routes.py). True si la petición era de la IA y ya se respondió."""
+        raw = self.path.split("?", 1)[0]
+        if not (raw.startswith("/api/ai/") or raw == "/api/matchup/live"):
+            return False
+        # Cambiar la clave o gastar tu cuota solo desde este PC, no desde otros aparatos de la red.
+        if self._is_remote() and raw in ("/api/ai/config", "/api/ai/test") and (method == "POST" or raw == "/api/ai/config"):
+            self._send(403, {"ok": False, "error": "La IA solo se configura desde el PC."})
+            return True
+        body = None
+        if method == "POST":
+            try:
+                body = self._body()
+            except Exception:
+                body = {}
+        code, payload = ai_routes.handle(advisor, method, self.path, body)
+        if code is None:
+            return False
+        self._send(code, payload)
+        return True
+
     def do_GET(self):
+        try:
+            self._do_GET()
+        except Exception as e:                      # una petición rota nunca debe tumbar el servidor
+            try:
+                self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
+            except Exception:
+                pass
+
+    def _do_GET(self):
+        if self._ai("GET"):
+            return
         path = urllib.parse.urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._serve_file(os.path.join(config.UI_DIR, "draft.html"), "no-cache")
@@ -145,7 +179,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, {"ok": False, "error": str(e)})
             return
         if path == "/api/meta":
-            ddragon.check_new_patch()
+            # El chequeo de parche hace red (hasta 10 s): en segundo plano, para que
+            # esta petición responda siempre al instante y no cuelgue al iPad.
+            threading.Thread(target=ddragon.check_new_patch, daemon=True).start()
             self._send(200, {
                 "ready": ddragon.ready,
                 "patch": ddragon.version,
@@ -262,6 +298,17 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf8") or "{}")
 
     def do_POST(self):
+        try:
+            self._do_POST()
+        except Exception as e:
+            try:
+                self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
+            except Exception:
+                pass
+
+    def _do_POST(self):
+        if self._ai("POST"):
+            return
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/settings":
             try:
@@ -271,6 +318,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, saved)
             except Exception as e:
                 self._send(400, {"error": str(e)})
+            return
+        if path == "/api/matchup":
+            try:
+                self._send(200, advisor.analyze_matchup())
+            except Exception as e:
+                self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
             return
         if path == "/api/analyze":
             try:
@@ -315,6 +368,8 @@ _server = None
 
 def start_server(port):
     global _server
+    ThreadingHTTPServer.daemon_threads = True       # los hilos de cada petición no bloquean el cierre
+    ThreadingHTTPServer.request_queue_size = 64     # varias pantallas (PC + iPad) sin rechazar conexiones
     _server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     thread = threading.Thread(target=_server.serve_forever, daemon=True)
     thread.start()

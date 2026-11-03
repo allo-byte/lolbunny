@@ -550,6 +550,50 @@ function burnBlock(b) {
   return `<div class="burnblock"><div class="sec-title">Daño por quemadura <span class="right">daño con el tiempo</span></div>${mine}${enemy}${cands}${ig}${notes}</div>`;
 }
 
+/* ---- Viabilidad (0-100 %) de cada objeto recomendado; la calcula backend/viability.py ---- */
+const VIA_PARTS = [["beneficio", "Beneficio real"], ["rivales", "Contra el equipo"], ["oro", "Oro disponible"], ["fase", "Fase"], ["campeon", "Tu campeón"]];
+
+function viaTitle(v) {
+  return VIA_PARTS.map(([k, l]) => `${l}: ${v.parts[k]}%`).join(" · ");
+}
+
+function viaChip(v) {
+  if (!v || v.pct == null) return "";
+  return `<span class="via ${esc(v.verdict || "alt")}" title="${esc(viaTitle(v))}"><b>${v.pct}%</b> ${esc(v.badge || "")}</span>`;
+}
+
+function viaMini(v) {
+  if (!v || v.pct == null) return "";
+  return `<em class="via-mini ${esc(v.verdict || "alt")}" title="${esc((v.badge || "") + " · " + viaTitle(v))}">${v.pct}%${v.verdict === "usa" ? " ✔" : v.verdict === "no" ? " ✖" : ""}</em>`;
+}
+
+function viaParts(v) {
+  if (!v || !v.parts) return "";
+  return `<div class="via-parts">${VIA_PARTS.map(([k, l]) =>
+    `<div class="via-p" title="${esc(l)}"><span>${esc(l)}</span><i><u style="width:${v.parts[k]}%"></u></i><b>${v.parts[k]}</b></div>`).join("")}</div>`;
+}
+
+function rankingBlock(p) {
+  const r = (p && p.ranking) || [];
+  if (!r.length) return "";
+  const top = r.slice(0, 5);
+  const poor = r.filter((e) => e.viability && e.viability.verdict === "no" && !top.includes(e)).slice(-2);
+  const row = (e) => {
+    const v = e.viability || {};
+    const gold = e.missing > 0 ? `te faltan <b>${e.missing}g</b>` : "ya te alcanza";
+    return `<div class="rk-row ${esc(v.verdict || "")}">
+      <img src="${e.icon}" alt=""><div class="rk-body">
+        <div class="rk-top"><b>${esc(e.name)}</b> <small>${e.net_cost}g</small> ${viaChip(v)}</div>
+        <div class="rk-why">${esc(e.why || "")} · ${gold} · <span class="rk-gain">${e.gain_pct >= 0 ? "+" : ""}${e.gain_pct}% vs ${esc((p.rival || {}).champion || "el rival")}, ${e.gain_team >= 0 ? "+" : ""}${e.gain_team}% vs el equipo</span></div>
+        ${viaParts(v)}</div></div>`;
+  };
+  const env = p.econ || {};
+  return `<div class="rk"><div class="sec-title">Qué comprar · viabilidad <span class="right">${env.phase ? "fase " + esc(env.phase) : ""}${env.income ? " · ~" + env.income + " g/min" : ""}</span></div>
+    ${top.map(row).join("")}
+    ${poor.length ? `<div class="rk-sub">Poco convenientes ahora</div>${poor.map(row).join("")}` : ""}
+    <div class="rk-note">Viabilidad = beneficio real contra tu rival (35 %) + contra todo el equipo (25 %) + oro disponible (20 %) + fase de la partida (10 %) + encaje con tu campeón (10 %). No es una probabilidad de ganar. «Siguiente» es lo que más sube tu duelo contra tu rival; «USA ESTA» es la opción con mejor viabilidad global (equipo, oro y fase).</div></div>`;
+}
+
 function parityBlock(p, noBuy) {
   if (!p || !p.available) return "";
   const rv = p.rival || {};
@@ -558,12 +602,12 @@ function parityBlock(p, noBuy) {
   const buyHtml = buy
     ? `<div class="pa-buy"><div class="pa-buy-t">COMPRA ESTO</div>
         <div class="pa-buy-row"><img src="${buy.icon}" alt=""><div>
-          <div class="pa-buy-n">${esc(buy.name)} <small>${buy.price}g</small> <span class="pa-kind ${esc(buy.label || "")}">${esc(buy.label || "")}</span></div>
+          <div class="pa-buy-n">${esc(buy.name)} <small>${buy.price}g</small> <span class="pa-kind ${esc(buy.label || "")}">${esc(buy.label || "")}</span> ${viaChip(buy.viability)}</div>
           <div class="pa-buy-w">${esc(buy.why)}</div>
           <div class="pa-buy-s">${buy.missing > 0 ? `Te faltan <b>${buy.missing}g</b>` : "<b>Ya te alcanza el oro</b>"} · duelo ${rv.r.toFixed(2)} → <b>${buy.r_after.toFixed(2)}</b> (${buy.gain_pct >= 0 ? "+" : ""}${buy.gain_pct}%)</div>
         </div></div></div>`
     : `<div class="pa-buy none">Ningún objeto de tu lista mejora este duelo ahora mismo: sigue tu orden de compra.</div>`;
-  const alts = (p.alternatives || []).map((a) => `<span class="pa-alt" title="${esc(a.name)} · ${esc(a.why)}"><img src="${a.icon}" alt=""><small>${esc(a.label || "")} ${a.gain_pct >= 0 ? "+" : ""}${a.gain_pct}%</small></span>`).join("");
+  const alts = (p.alternatives || []).map((a) => `<span class="pa-alt" title="${esc(a.name)} · ${esc(a.why)}"><img src="${a.icon}" alt=""><small>${esc(a.label || "")} ${a.gain_pct >= 0 ? "+" : ""}${a.gain_pct}%</small>${viaMini(a.viability)}</span>`).join("");
   const others = (p.others || []).map((o) => `<span class="pa-o ${o.verdict}"><img src="${o.icon}" alt="">${esc(o.champion)} ${o.r.toFixed(2)}</span>`).join("");
   return `<div class="parity ${rv.verdict}">
     <div class="pa-head"><img src="${rv.icon}" alt=""><div><div class="pa-vs">Tú vs ${esc(rv.champion)}</div>
@@ -596,7 +640,7 @@ function buildReviewBlock(p) {
     const lead = r.status === "cambia" ? "en vez de este pon" : "mejor opción posible (no compensa)";
     return `<div class="br-row ${r.status}">${head}
       <div class="br-swap"><span class="br-arrow">${lead}</span> <img src="${s.icon}" alt=""><div>
-        <b>${esc(s.name)}</b> <span class="pa-kind ${esc(s.label || "")}">${esc(s.label || "")}</span>
+        <b>${esc(s.name)}</b> <span class="pa-kind ${esc(s.label || "")}">${esc(s.label || "")}</span> ${viaChip(s.viability)}
         <div class="br-pct"><b>+${s.gain_main}%</b> vs ${esc(rival)} · <b>${s.gain_team >= 0 ? "+" : ""}${s.gain_team}%</b> vs el equipo</div>
         <div class="br-cost">${s.cost}g de diferencia${s.missing > 0 ? ` · te faltan ${s.missing}g` : " · ya te alcanza"}</div></div></div></div>`;
   }).join("");
@@ -626,7 +670,14 @@ function liveBuildBox(p) {
   const verdict = rv ? rv.verdict : "";
   const rival = p.rival;
   const stateWord = rival ? { delante: "vas por delante", parejo: "parejos", detras: "vas por detrás" }[rival.verdict] : "";
-  const head = `<div class="lb-head"><span class="lb-title">TU BUILD EN VIVO</span>${
+  
+  // Team advantage global
+  const teamAdv = p.team_advantage;
+  const teamAdvHtml = teamAdv
+    ? `<div class="lb-team-adv ${teamAdv.verdict}">Ventaja vs EQUIPO: <b>${teamAdv.score}</b> (${teamAdv.verdict}) · ${teamAdv.duels.map(d => `${d.champion}: ${d.r}`).join(" · ")}</div>`
+    : "";
+  
+  const head = `<div class="lb-head"><span class="lb-title">TU BUILD EN VIVO</span>${teamAdvHtml}${
     p.exact ? `<span class="lb-exact" title="Tus estadísticas (vida, armadura, RM, daño, velocidad de ataque…) vienen directamente del juego, con runas y bonos incluidos">● stats reales</span>` : ""}${
     rival ? `<span class="lb-vs">vs ${esc(rival.champion)}${p.lane && p.lane.rival_lane ? ` (${esc(p.lane.rival_lane)})` : ""} · ${stateWord} (${rival.r.toFixed(2)})</span>` : ""}</div>`;
   const mark = { perfecto: "✓", deja: "=", cambia: "⇄", construccion: "…", "": "" };
@@ -646,13 +697,13 @@ function liveBuildBox(p) {
   }
   const b = p.buy;
   const next = b
-    ? `<div class="lb-next"><span>SIGUIENTE</span><img src="${b.icon}" alt=""><div><b>${esc(b.name)}</b> <small>${b.net_cost}g para completarlo · ${b.missing > 0 ? `te faltan ${b.missing}g` : "ya te alcanza"}</small>${b.step ? `<div class="lb-step">Con tu oro compra ya: <img src="${b.step.icon}" alt=""><b>${esc(b.step.name)}</b> <small>${b.step.price}g</small></div>` : ""}<div class="lb-why">${esc(b.why)} <span class="lb-pct">+${b.gain_pct}%</span>${
-        p.ugg_next && p.ugg_next.id !== b.id ? ` · <small>U.GG: ${esc(p.ugg_next.name)}</small>` : ""}</div></div></div>`
+    ? `<div class="lb-next"><span>SIGUIENTE</span><img src="${b.icon}" alt=""><div><b>${esc(b.name)}</b> ${viaChip(b.viability)} <small>${b.net_cost}g para completarlo · ${b.missing > 0 ? `te faltan ${b.missing}g` : "ya te alcanza"}</small>${b.step ? `<div class="lb-step">Con tu oro compra ya: <img src="${b.step.icon}" alt=""><b>${esc(b.step.name)}</b> <small>${b.step.price}g</small></div>` : ""}<div class="lb-why">${esc(b.why)} <span class="lb-pct">+${b.gain_pct}%</span>${
+        p.ugg_next && p.ugg_next.id !== b.id ? ` · <small>U.GG: ${esc(p.ugg_next.name)}</small> ${viaMini(p.ugg_next.viability)}` : ""}</div></div></div>`
     : (rv ? `<div class="lb-next none">Ninguna compra mejora tu duelo ahora${p.ugg_next ? ` · plan U.GG: ${esc(p.ugg_next.name)}` : ""}.</div>` : "");
   const detail = rv
     ? `<details class="lb-det" data-keep="lb" ${lbOpen ? "open" : ""}><summary>Ver detalle</summary>${parityBlock(p, true)}${buildReviewBlock(p)}</details>`
     : "";
-  return `<div class="lb ${verdict}">${head}${laneSelector(p)}<div class="lb-items">${items}</div>${line}${next}${buildsBlock(p.builds)}${detail}</div>`;
+  return `<div class="lb ${verdict}">${head}${laneSelector(p)}<div class="lb-items">${items}</div>${line}${next}${rankingBlock(p)}${buildsBlock(p.builds)}${detail}</div>`;
 }
 
 let bbOpen = false, bbKind = "";
@@ -666,7 +717,7 @@ function buildsBlock(b) {
   const needTxt = { corta_curas: "corta curas", pen_armadura: "pen. armadura", pen_magica: "pen. mágica",
     tenacidad: "tenacidad", rompe_escudos: "rompe escudos" };
   const its = cur.items.map((it, i) =>
-    `<div class="bb-it" title="${esc(it.name)} (${it.price}g)"><span class="bb-n">${i + 1}</span><img src="${it.icon}" alt=""><small>${esc(it.label)}</small><i>${it.gain_pct >= 0 ? "+" : ""}${it.gain_pct}%</i></div>`).join("");
+    `<div class="bb-it" title="${esc(it.name)} (${it.price}g)"><span class="bb-n">${i + 1}</span><img src="${it.icon}" alt=""><small>${esc(it.label)}</small><i>${it.gain_pct >= 0 ? "+" : ""}${it.gain_pct}%</i>${viaMini(it.viability)}</div>`).join("");
   const ch = cur.cheap || { now: [], left: 0 };
   const parts = cur.items.map((it) => (it.parts || []).length
     ? `<div class="bb-pg" title="${esc(it.name)}"><img class="bb-pt" src="${it.icon}" alt=""><span>←</span>${it.parts.map((c) =>
@@ -681,7 +732,7 @@ function buildsBlock(b) {
     <div class="bb-blurb">${cur.verdict ? `<b class="mc-verdict ${esc(cur.rating || "")}">${esc(cur.verdict)}</b><br>` : ""}${esc(cur.blurb)}</div>
     <div class="bb-items">${its}</div>${cheap}
     <div class="bb-sum">Paridad ${cur.r_now.toFixed(2)} → <b>${cur.r_final.toFixed(2)}</b> (${cur.gain_pct >= 0 ? "+" : ""}${cur.gain_pct}%) · ${cur.total_cost}g${cur.missing > 0 ? ` (faltan ${cur.missing}g)` : ""} · vida ${cur.hp} · arm ${cur.armor} · RM ${cur.mr}${cov ? `<br>Cubre: ${cov}` : ""}${b.heals ? `<br><b>Rival con robo de vida:</b> todas llevan corta curas.` : ""}</div>
-    <div class="bb-note">${esc(b.note || "")} Orden = compra primero lo que más rinde por oro. Cada % es lo que ese objeto sube la paridad dentro de la build.</div></details>`;
+    <div class="bb-note">${esc(b.note || "")}${b.role_itemization?.role && b.role_itemization.role !== "unknown" ? `<br>Ajuste contextual activo: ${esc(({top:"Top",jungle:"Jungla",mid:"Mid",adc:"ADC",support:"Support"})[b.role_itemization.role] || b.role_itemization.role)} · perfil ${esc(b.role_itemization.profile || "general")}.` : ""} Orden = compra primero lo que más rinde por oro. Cada % es lo que ese objeto sube la paridad dentro de la build.</div></details>`;
 }
 
 function hybridBlock(h) {
@@ -716,6 +767,36 @@ function lowGoldBlock(lg) {
     <div class="sec-title">Poco oro <span class="right">${lg.mode === "on" ? "activado a mano" : "detectado"}</span></div>
     ${reasons}${head}${rows}${post}
     <div class="lg-note">${esc(lg.note || "")}</div></div>`;
+}
+
+function earlyGoldOption(o, title) {
+  if (!o || !(o.items || []).length) return "";
+  const its = o.items.map((it) => `<div class="fb-item"><img src="${it.icon}" alt="">
+      <div><div class="fb-name">${esc(it.name)} <span class="badge">${it.cost}g</span></div>
+      <div class="lg-sub">${esc(it.stats || "")}${it.gain_pct != null ? " · +" + it.gain_pct + "% duelo" : ""}</div></div></div>`).join("");
+  return `<div class="fb-card rec"><div class="fb-head"><b>${esc(title)}</b>
+      <span class="badge">${o.total_cost}g</span>${o.gain_pct != null ? `<span class="badge good">+${o.gain_pct}%</span>` : ""}</div>${its}</div>`;
+}
+
+function earlyGoldPick(p) {
+  if (!p) return "";
+  if (p.available === false) return `<div class="lg-line">${esc(p.reason || "Sin datos suficientes.")}</div>`;
+  if (!(p.items || []).length) return `<div class="lg-line">${esc(p.note || "Sin recomendación con este oro.")}</div>`;
+  const alts = (p.alternatives || []).map((a) => earlyGoldOption(a, "Alternativa")).join("");
+  const eco = p.cheaper_than_best ? `<div class="lg-line">Casi igual de buena que la de más ganancia y te ahorra oro.</div>` : "";
+  return `${earlyGoldOption(p, "Compra esto")}${eco}${alts}${p.left > 0 ? `<div class="lg-line">Te sobran ${p.left}g.</div>` : ""}`;
+}
+
+function earlyGoldBlock(eg) {
+  if (!eg || eg.available === false) return "";
+  if (eg.mode === "live") {
+    const st = eg.stage || {};
+    const body = eg.pick ? earlyGoldPick(eg.pick) : `<div class="lg-line">${esc(eg.note || "")}</div>`;
+    return `<div class="lowgold"><div class="sec-title">Oro y objetos <span class="right">${esc(st.label || "")} · ${eg.accumulated_gold}g acumulado</span></div>${body}
+      <div class="lg-note">${esc(eg.pick && eg.pick.note || "")}</div></div>`;
+  }
+  const cols = (eg.scenarios || []).map((sc) => `<div><div class="lg-line"><b>Con ~${sc.budget}g</b> · ${esc((sc.stage || {}).label || "")}</div>${earlyGoldPick(sc.pick)}</div>`).join("");
+  return `<div class="lowgold"><div class="sec-title">Qué comprar según tu oro <span class="right">estimado vs esta composición</span></div>${cols}</div>`;
 }
 
 function firstBuysBlock(fb, stages) {
@@ -803,7 +884,7 @@ function secBuild(st) {
   const altHtml = altBuildsBlock(items.alt_builds);
   const archHtml = archetypesBlock(items.archetypes);
   const earlyHtml = earlyRows([items.target].concat(full), "Versión early de cada objeto · cuándo completarlo");
-  return `<div class="sec-title">Build para ganar <span class="right">contra este rival</span></div>${patchWarningBlock(st.patch_warning)}${hybridBlock(st.hybrid_plan)}${lowGoldBlock(st.low_gold)}${firstBuysBlock(st.first_buys, items.stages)}${burnBlock(st.burn)}${counterPlanBlock(st.counter_plan)}${dvsHtml}${swapTip}${orderTip}${fullHtml}${earlyHtml}${stages}${altHtml}${archHtml}`;
+  return `<div class="sec-title">Build para ganar <span class="right">contra este rival</span></div>${patchWarningBlock(st.patch_warning)}${hybridBlock(st.hybrid_plan)}${lowGoldBlock(st.low_gold)}${earlyGoldBlock(st.early_gold)}${firstBuysBlock(st.first_buys, items.stages)}${burnBlock(st.burn)}${counterPlanBlock(st.counter_plan)}${dvsHtml}${swapTip}${orderTip}${fullHtml}${earlyHtml}${stages}${altHtml}${archHtml}`;
 }
 
 function secCounterCore(st) {
@@ -882,37 +963,6 @@ function counterPlanBlock(plan) {
     ${cub}
     ${earlyRows((nucleo.adaptado || []).concat((plan.cambios || []).map((c) => c.in).filter(Boolean)), "Versión early del plan de counter")}
   </div>`;
-}
-
-function secNeeds(st) {
-  const items = st.items;
-  const needs = st.needs || (items && items.needs);
-  if (!needs || !needs.length) return "";
-  const blocks = needs
-    .map((n) => {
-      const cards = n.items
-        .map((it) => {
-          const eff = it.efficiency && it.efficiency.ratio != null ? `<span class="iEff ${it.efficiency.ratio >= 1 ? "good" : it.efficiency.ratio >= 0.9 ? "mid" : "low"}">${it.efficiency.percent}% oro</span>` : "";
-          return `<div class="afford" title="${esc(it.name)} (${it.price}g)${it.desc ? " — " + esc(it.desc) : ""}"><img src="${it.icon}" alt=""><span>${esc(it.name)}</span>${eff}</div>`;
-        })
-        .join("");
-      if (n.need === "__prio__") {
-        return `<div class="tip buy" style="margin-bottom:8px"><span><b>ORDEN A COMPRAR:</b> ${esc(n.reason)}</span></div>`;
-      }
-      const head = n.priority
-        ? `<span class="prio-badge">AHORA</span> ${esc(n.label)}${n.reason ? ` <span class="prio-why">— ${esc(n.reason)}</span>` : ""}`
-        : esc(n.label);
-      const top = n.items && n.items[0] ? n.items[0].name : "";
-      const priceTop = n.items && n.items[0] ? n.items[0].price : null;
-      const effTop = n.items && n.items[0] && n.items[0].efficiency && n.items[0].efficiency.percent != null ? n.items[0].efficiency.percent + "% oro" : "";
-      const reasonTop = n.priority ? ` · Mejor para esto: ${top}${priceTop ? " (" + priceTop + "g)" : ""}${effTop ? " · " + effTop : ""}` : ` · TOP: ${top}${priceTop ? " (" + priceTop + "g)" : ""}${effTop ? " · " + effTop : ""}`;
-      return `<details class="need ${n.priority ? "prio" : ""}" ${n.priority ? "open" : ""}><summary>${head} · ${n.items.length}${reasonTop}</summary>
-        <div class="afford-row">${cards}</div></details>`;
-    })
-    .join("");
-  return `<div class="sec-title">Mejores objetos por necesidad <span class="right">según el rival</span></div>
-    <p style="font-size:10.5px;opacity:.7;margin:0 0 6px">De todos los objetos del juego: los mejores por cada necesidad, ordenados por lo que tu rival te obliga a comprar. Los marcados <b>AHORA</b> son los que te dan ventaja en esta partida.</p>
-    ${blocks}`;
 }
 
 function secSkills(st) {
@@ -1092,7 +1142,7 @@ function secLive(st) {
       <span class="pill gold">Oro <b>${Math.floor(l.gold)}</b></span>
       <span class="pill">Nivel <b>${l.level}</b></span>
       ${kda ? `<span class="pill">KDA <b>${kda}</b></span>` : ""}
-      <span class="pill">Tiempo <b>${esc(l.time)}</b></span>
+      <span class="pill">Tiempo <b data-gclock>--:--</b></span>
       ${score ? `<span class="pill">Marcador <b>${score}</b></span>` : ""}
     </div>`;
 }
@@ -1284,23 +1334,16 @@ function mgSlot(sl) {
   if (!sl.item) {
     const b = sl.swap;
     return `<div class="mg-slot empty"><div class="mg-ico empty">+</div><div class="mg-st"><b>Hueco libre</b>${
-      b ? `<div class="mg-why"><img src="${b.icon}" alt=""> ${esc(sl.reason)}</div>` : ""}</div></div>`;
+      b ? `<div class="mg-why"><img src="${b.icon}" alt=""> ${esc(sl.reason)} ${viaChip(b.viability)}</div>` : ""}</div></div>`;
   }
   const tag = { keep: sl.status === "perfecto" ? "✓ ÓPTIMO" : "= DEJA", swap: "⇄ CAMBIA", build: "… EN CURSO" }[sl.action] || "";
   const cls = sl.action === "swap" ? "cambia" : sl.status || "";
   const swap = sl.action === "swap" && sl.swap
-    ? `<div class="mg-swap"><span>pon</span><img src="${sl.swap.icon}" alt=""><b>${esc(sl.swap.name)}</b> <small>+${sl.swap.gain_main}%</small></div>`
+    ? `<div class="mg-swap"><span>pon</span><img src="${sl.swap.icon}" alt=""><b>${esc(sl.swap.name)}</b> <small>+${sl.swap.gain_main}%</small> ${viaChip(sl.swap.viability)}</div>`
     : "";
   return `<div class="mg-slot ${cls}" title="${esc(sl.item.name)}"><div class="mg-ico"><img src="${sl.item.icon}" alt=""></div>
     <div class="mg-st"><div class="mg-n">${esc(sl.item.name)} <i class="mg-tag ${cls}">${tag}</i></div>
     <div class="mg-why">${esc(sl.reason)}</div>${swap}</div></div>`;
-}
-
-function mgTeamCol(list, title) {
-  const rows = (list || []).map((p) => `<div class="mg-pl${p.is_me ? " me" : ""}" title="${esc(p.source || "")}">
-      <span class="lane-tag">${esc(p.lane)}</span><img src="${p.icon}" alt="">
-      <b>${esc(p.champion)}</b><small>Nv ${p.level ?? "?"} · ${esc(p.kda)} · ${p.cs} CS</small></div>`).join("");
-  return `<div class="mg-col"><div class="mg-coltitle">${title}</div>${rows}</div>`;
 }
 
 const RATE_WORD = { usa: "✔ USA ESTA", vale: "≈ TAMBIÉN VALE", no: "✖ NO LA USES" };
@@ -1337,22 +1380,521 @@ function secMyGame(st) {
         ${kda ? `<span class="pill">KDA <b>${kda}</b></span>` : ""}
         <span class="pill">CS <b>${g.cs}</b> <small>(${g.cs_min}/min)</small></span>
         ${g.ward_score != null ? `<span class="pill">Visión <b>${g.ward_score}</b></span>` : ""}
-        ${st.live ? `<span class="pill">Tiempo <b>${esc(st.live.time)}</b></span>` : ""}
+        ${st.live ? `<span class="pill">Tiempo <b data-gclock>--:--</b></span>` : ""}
         ${score ? `<span class="pill">Marcador <b>${score}</b></span>` : ""}
       </div></div></div>
     ${stats ? `<div class="stat-row mg-stats">${stats}</div>` : ""}
     <div class="sec-title" style="margin-top:10px">Mi build · 6 huecos <span class="right">${esc(g.summary || "")}</span></div>
     <div class="mg-slots">${(g.slots || []).map(mgSlot).join("")}${trinket}</div>
     ${mgChoice(g.build_choice)}
-    <div class="sec-title" style="margin-top:10px">Equipos por línea <span class="right">${g.rival ? "tu rival: " + esc(g.rival) : ""}</span></div>
-    <div class="mg-teams">${mgTeamCol(g.teams && g.teams.mine, "Mi equipo")}${mgTeamCol(g.teams && g.teams.foes, "Rivales")}</div>
   </div>`;
+}
+
+
+/* ---------- Campeones y enfrentamientos: rivales por posición + «Analizar enfrentamiento» ---------- */
+const LANE_ORDER = [["top", "TOP"], ["jungle", "JUNGLE"], ["middle", "MID"], ["bottom", "ADC"], ["utility", "SUPPORT"]];
+const mu = { status: "idle", data: null, error: "", openRival: null, detailOpen: false, opinionDraft: "", aiOpen: false, typingUntil: 0, lastHtml: "", liveBusy: false };
+
+/* ---- Reloj de partida: una sola fuente para todo el UI ----
+ * El motor entrega el tiempo del juego en cada lectura; entre lecturas el reloj avanza solo
+ * (cada segundo real = un segundo de partida) y se corrige con la lectura nueva. Todas las
+ * etiquetas [data-gclock] (Inicio, Mi partida, Estado en vivo) muestran el mismo valor. */
+const gclock = { sec: null, at: 0, raw: null };
+const GCLOCK_MAX_DRIFT = 6; // s: si el motor deja de enviar tiempo nuevo (pausa/cierre), no se inventa más
+
+function gclockSync(st) {
+  const l = st && st.live;
+  let s = l && Number(l.time_s);
+  if (!(s >= 0)) {
+    const m = /^(\d+):(\d+)/.exec(String((l && l.time) || ""));
+    s = m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  }
+  if (s == null || !(s >= 0) || st.phase !== "in_game") { gclock.sec = null; gclock.raw = null; return; }
+  if (s !== gclock.raw) {
+    const cur = gclockNow();
+    gclock.raw = s;
+    // una lectura levemente atrasada no hace retroceder el reloj; un salto real (>1.5 s) sí lo corrige
+    gclock.sec = cur != null && s < cur && cur - s < 1.5 ? cur : s;
+    gclock.at = performance.now();
+  }
+}
+
+function gclockNow() {
+  if (gclock.sec == null) return null;
+  return gclock.sec + Math.min((performance.now() - gclock.at) / 1000, GCLOCK_MAX_DRIFT);
+}
+
+function gclockText() {
+  const s = gclockNow();
+  if (s == null) return "--:--";
+  const t = Math.floor(s);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+  const p = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${p(m)}:${p(x)}` : `${p(m)}:${p(x)}`;
+}
+
+function gclockPaint() {
+  const txt = gclockText();
+  document.querySelectorAll("[data-gclock]").forEach((el) => { if (el.textContent !== txt) el.textContent = txt; });
+}
+setInterval(gclockPaint, 250);
+
+function liveMinute(st) {
+  const t = st && st.live && st.live.time;
+  const m = /^(\d+):(\d+)/.exec(String(t || ""));
+  return m ? Number(m[1]) + Number(m[2]) / 60 : null;
+}
+
+async function runMatchup() {
+  if (mu.status === "loading") return;
+  mu.status = "loading";
+  mu.error = "";
+  if (state) render(state);
+  try {
+    const r = await fetch("/api/matchup", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await r.json();
+    if (j && j.ok) { mu.data = j; mu.data.at_minute = liveMinute(state); mu.status = "done"; }
+    else { mu.status = "error"; mu.error = (j && j.error) || "No se pudo analizar."; }
+  } catch (e) {
+    mu.status = "error";
+    mu.error = "Sin conexión con el motor local.";
+  }
+  if (state) render(state);
+}
+
+/* Build final: los 6 objetos contra su equipo, del 1 al 6, siguiendo tu economía */
+const FB_TAG = {
+  tienes: () => "✓ YA LO TIENES",
+  ahora: () => "COMPRA YA",
+  siguiente: () => "SIGUIENTE",
+  luego: () => "DESPUÉS",
+};
+
+function fbEta(r) {
+  if (r.status === "tienes" || r.status === "ahora") return "";
+  const t = r.eta_min != null ? ` · ~${r.eta_min} min` : "";
+  return `faltan ${r.missing}g${t}`;
+}
+
+function secFinalBuild(fb) {
+  if (!fb || !(fb.items || []).length) {
+    return `<div class="fb fb-empty"><div class="sec-title">Tu build contra su equipo</div>
+      <div class="mu-why">No pude calcular la build final con los datos de ahora. Vuelve a analizar en unos segundos.</div></div>`;
+  }
+  const items = fb.items.map((r) => `<div class="fb-it ${esc(r.status)}" data-itemname="${esc(r.name)}" title="Toca para copiar el nombre y pegarlo en la tienda">
+      <span class="fb-n">${r.pos}</span>
+      <img src="${r.icon}" alt="">
+      <div class="fb-b">
+        <div class="fb-name"><b>${esc(r.name)}</b> <i class="fb-tag ${esc(r.status)}">${FB_TAG[r.status] ? FB_TAG[r.status]() : ""}</i>${r.ai && r.ai.verdict !== "neutral" ? ` <i class="ai-tag ${esc(r.ai.verdict)}" title="${esc(r.ai.why || "")}">${r.ai.verdict === "apoya" ? "IA ✓" : "IA duda"}</i>` : ""}</div>
+        <div class="fb-why">${esc(r.why || "")}</div>
+        <div class="fb-eco">${r.status === "tienes" ? "" : `<b>${r.cost}g</b> · acumulado ${r.cum_cost}g${fbEta(r) ? " · " + fbEta(r) : ""}`}</div>
+      </div></div>`).join("");
+  const rep = (fb.replaces || []).length
+    ? `<div class="fb-rep">Reemplaza: ${fb.replaces.map((x) => `<span><img src="${x.icon}" alt="">${esc(x.name)}</span>`).join("")}</div>` : "";
+  const buy = fb.total_to_buy
+    ? `Por comprar <b>${fb.total_to_buy}g</b>${fb.missing_total > 0 ? ` · te faltan <b>${fb.missing_total}g</b>${fb.income ? ` (~${Math.round(fb.missing_total / fb.income)} min a ${fb.income} g/min)` : ""}` : " · <b>ya te alcanza todo</b>"}`
+    : "Tu build ya está completa y es la que mejor te va contra su equipo.";
+  return `<div class="fb">
+    <div class="sec-title">Tu build contra su equipo · del 1 al 6 <span class="right">${esc(fb.kind || "")}${fb.pct_best ? " · " + fb.pct_best + "%" : ""}</span></div>
+    <div class="fb-sum">${buy}</div>
+    <div class="fb-list">${items}</div>${rep}
+    <div class="fb-foot"><button type="button" class="hs-link" data-go="economia">Ver economía y compras &rarr;</button>
+      <small>${esc(fb.note || "")}</small></div>
+  </div>`;
+}
+
+function muAction(a) {
+  return { keep: ["✓ CONSERVA", "perfecto"], swap: ["⇄ CAMBIA", "cambia"], build: ["… EN CURSO", "construccion"], empty: ["", ""] }[a] || ["", ""];
+}
+
+function muItemRow(it) {
+  const [tag, cls] = muAction(it.action);
+  const swap = it.action === "swap" && it.swap
+    ? `<div class="mu-swap"><span>compra</span>${it.swap.icon ? `<img src="${it.swap.icon}" alt="">` : ""}<b>${esc(it.swap.name)}</b> ${viaChip(it.swap.viability)}</div>` : "";
+  return `<div class="mu-it ${cls}"><img src="${it.item.icon}" alt=""><div class="mu-itb">
+    <div class="mu-itn"><b>${esc(it.item.name)}</b> <i class="mg-tag ${cls}">${tag}</i></div>
+    <div class="mu-why">${esc(it.reason)}</div>${swap}</div></div>`;
+}
+
+function muBuyRow(b) {
+  const v = b.viability || {};
+  return `<div class="mu-buy ${esc(v.verdict || "")}"><img src="${b.icon}" alt=""><div class="mu-itb">
+    <div class="mu-itn"><b>${esc(b.name)}</b> <small>${b.net_cost}g</small> ${viaChip(v)}</div>
+    <div class="mu-why">${esc(b.why || "")} ${b.missing > 0 ? `· te faltan <b>${b.missing}g</b>` : "· ya te alcanza"} · <b>${b.gain_pct >= 0 ? "+" : ""}${b.gain_pct}%</b> a tu duelo, <b>${b.gain_team >= 0 ? "+" : ""}${b.gain_team}%</b> al equipo</div>
+  </div></div>`;
+}
+
+function muRivalDetail(r) {
+  const slots = (r.slots || []).filter((s) => s.item).map((s) => muItemRow({ item: s.item, action: s.action, reason: s.reason, swap: s.swap }));
+  const buys = (r.buys || []).map(muBuyRow).join("");
+  return `<div class="mu-det">
+    <div class="mu-h">Qué hacer con tu build contra ${esc(r.champion)}</div>${slots.join("")}
+    ${buys ? `<div class="mu-h">Para ganar ventaja contra ${esc(r.champion)}</div>${buys}` : `<div class="mu-why">Ninguna compra mejora este duelo ahora mismo.</div>`}
+    <div class="mu-h">Lo que lleva</div><div class="mu-foeitems">${(r.items || []).map((i) => `<img src="${i.icon}" alt="" title="${esc(i.name)}">`).join("") || "<small>Sin objetos todavía</small>"}</div>
+  </div>`;
+}
+
+function secMatchup(st) {
+  const g = st.mygame;
+  if (!g || st.phase !== "in_game") return "";
+  // Mientras escribes la opinión de otra IA, la sección no se repinta (si no, perderías el texto).
+  if (mu.typingUntil > Date.now() && mu.lastHtml) return mu.lastHtml;
+  const data = mu.data;
+  const byChamp = {};
+  ((data && data.rivals) || []).forEach((r) => { byChamp[r.champion] = r; });
+  const foes = (g.teams && g.teams.foes) || [];
+  const groups = LANE_ORDER.map(([id, label]) => [id, label, foes.filter((f) => f.lane_id === id)]);
+  const rest = foes.filter((f) => !LANE_ORDER.some(([id]) => id === f.lane_id));
+  if (rest.length) groups.push(["", "SIN LÍNEA", rest]);
+  const verdictWord = { delante: "VAS POR DELANTE", parejo: "PAREJOS", detras: "VAS POR DETRÁS" };
+  const rows = groups.filter(([, , l]) => l.length).map(([id, label, list]) => list.map((f) => {
+    const a = byChamp[f.champion];
+    const open = mu.openRival === f.champion;
+    return `<div class="mu-foe ${a ? esc(a.verdict) : ""}">
+      <div class="mu-foehead" ${a ? `data-mu-open="${esc(f.champion)}"` : ""}>
+        <span class="lane-tag">${label}</span><img src="${f.icon}" alt=""><div class="mu-foen"><b>${esc(f.champion)}</b>
+        <small>Nv ${f.level ?? "?"} · ${esc(f.kda)} · ${f.cs} CS · ${f.n_items} objeto(s)</small></div>
+        ${a ? `<span class="mu-verdict ${esc(a.verdict)}">${verdictWord[a.verdict] || ""} <small>${a.r.toFixed(2)}</small></span><span class="mu-caret">${open ? "▾" : "▸"}</span>` : ""}
+      </div>
+      ${a && a.summary ? `<div class="mu-sum">${esc(a.summary)}</div>` : ""}
+      ${a && open ? muRivalDetail(a) : ""}</div>`;
+  }).join("")).join("");
+
+  const stale = data && data.at_minute != null && liveMinute(st) != null && liveMinute(st) - data.at_minute >= 1.5
+    ? `<div class="mu-stale">Este análisis es de hace ${Math.round(liveMinute(st) - data.at_minute)} min de partida: vuelve a analizar.</div>` : "";
+  const btnTxt = mu.status === "loading" ? "Analizando…" : data ? "Volver a analizar" : "Analizar enfrentamiento";
+
+  let status = "";
+  if (mu.status === "error") status = `<div class="mu-err">${esc(mu.error)}</div>`;
+  else if (mu.status === "loading" && !data) status = `<div class="mu-load">Calculando tu build contra cada rival y su composición…</div>`;
+  let finalHtml = "", detail = "";
+  if (data) {
+    const t = data.team || {};
+    const adv = t.advantage;
+    finalHtml = muAiBlock(data.ai) + secFinalBuild(data.final_build) + muAiBuild(data);
+    detail = `<details class="mu-detail" data-keep="mu" ${mu.detailOpen ? "open" : ""}>
+      <summary>Detalle del análisis · cambios y compras sueltas${adv ? " · ventaja " + adv.score + " (" + esc(adv.verdict) + ")" : ""}</summary>
+      <div class="mu-team">
+        <div class="mu-tsum">${esc(t.summary || "")}</div>
+        <div class="mu-h">Tus objetos: cuáles cambiar y cuáles conservar</div>${(t.items || []).map(muItemRow).join("")}
+        <div class="mu-h">Qué comprar para conseguir ventaja</div>${(t.buys || []).map(muBuyRow).join("") || `<div class="mu-why">Ninguna compra mejora tu paridad media ahora mismo.</div>`}
+        <div class="mu-note">${esc(data.note || "")}${data.econ && data.econ.phase ? ` Fase ${esc(data.econ.phase)}${data.econ.income ? ` · ~${data.econ.income} g/min` : ""}.` : ""}</div></div>
+    </details>`;
+  }
+  return (mu.lastHtml = `<div class="mu">
+    <div class="sec-title">Enfrentamientos por posición <span class="right">${esc(g.champion)}${g.lane ? " · " + esc(g.lane) : ""} · Nv ${g.level}</span></div>
+    <div class="mu-bar"><button type="button" class="mu-run" data-mu-run ${mu.status === "loading" ? "disabled" : ""}>${btnTxt}</button>
+      <small>${data ? "Te da la build de 6 objetos que mejor contrarresta a todo su equipo." : "Compara tu build con la de cada rival y te dice qué 6 objetos llevar."}</small></div>
+    ${status}${stale}${finalHtml}
+    <div class="mu-foes">${rows || "<div class='mu-why'>Aún no veo a los rivales.</div>"}</div>
+    ${detail}
+  </div>`);
+}
+
+function muAiEco(e) {
+  if (!e) return "";
+  const chip = (x) => `<span class="eco-chip"><img src="${x.icon || ""}" alt="">${esc(x.name)}${x.cost != null ? ` <small>${x.cost}g</small>` : x.price != null ? ` <small>${x.price}g</small>` : ""}</span>`;
+  const rows = [];
+  rows.push(`<div class="eco-line"><b>Oro:</b> ${e.gold}g${e.income ? ` · +${e.income} g/min` : ""}${e.minute != null ? ` · min ${Math.round(e.minute)}` : ""}</div>`);
+  if ((e.buy_now || []).length) rows.push(`<div class="eco-line eco-now"><b>Compra YA:</b> ${e.buy_now.map(chip).join("")}</div>`);
+  if ((e.parts_now || []).length) rows.push(`<div class="eco-line eco-now"><b>Compra ya el componente</b> (para ${esc(e.parts_now[0]["for"] || "tu siguiente objeto")}): ${e.parts_now.map(chip).join("")}</div>`);
+  if (!(e.buy_now || []).length && !(e.parts_now || []).length) rows.push(`<div class="eco-line">Con tu oro actual aún no compras nada de esta build.</div>`);
+  if (e.next) rows.push(`<div class="eco-line"><b>Siguiente:</b> ${esc(e.next.name)} · faltan ${e.next.missing}g${e.next.eta_min != null ? ` (~${e.next.eta_min} min${e.next.at_minute != null ? `, hacia el min ${Math.round(e.next.at_minute)}` : ""})` : ""}</div>`);
+  if (e.leftover > 0 && ((e.buy_now || []).length || (e.parts_now || []).length)) rows.push(`<div class="eco-line eco-small">Te quedan ${e.leftover}g tras esas compras.</div>`);
+  if (e.idle_alert) rows.push(`<div class="ai-alert">💰 ${esc(e.idle_alert)}</div>`);
+  return `<div class="aib-eco">${rows.join("")}</div>`;
+}
+
+/* Apartado propio: la build de 6 objetos que arma la IA con el contexto de la partida (validada contra el catálogo real) */
+function muAiBuild(data) {
+  const ai = data.ai || { status: "off" };
+  const b = data.ai_build;
+  const title = `<div class="sec-title">Build recomendada por IA${ai.provider ? ` <span class="right">${esc(ai.provider)}${ai.local ? " · local" : ""}</span>` : ""}</div>`;
+  if (!b) {
+    const msg = ai.status === "off"
+      ? `${esc(ai.reason || "Activa una IA (Grok, Ollama…)")} Abre «Conectar la IA» arriba y aquí verás su build.`
+      : ai.status === "error"
+        ? `La IA no respondió${ai.error ? " (" + esc(ai.error) + ")" : ""}. Reintento solo; mientras, vale la build del motor.`
+        : `<span class="spinner"></span> La IA está armando tu build con lo que pasa ahora…`;
+    return `<div class="aib aib-${esc(ai.status)}">${title}<div class="mu-why">${msg}</div></div>`;
+  }
+  const items = b.items.map((r) => `<div class="fb-it ${esc(r.status)}" data-itemname="${esc(r.name)}" title="Toca para copiar el nombre y pegarlo en la tienda">
+      <span class="fb-n">${r.pos}</span>
+      <img src="${r.icon}" alt="">
+      <div class="fb-b">
+        <div class="fb-name"><b>${esc(r.name)}</b> <i class="fb-tag ${esc(r.status)}">${FB_TAG[r.status] ? FB_TAG[r.status]() : ""}</i>${r.moved ? ` <i class="ai-tag apoya" title="Te alcanza ya: se compra antes para no dejar oro parado">por oro</i>` : ""}</div>
+        <div class="fb-why">${esc(r.why || "")}</div>
+        <div class="fb-eco">${r.status === "tienes" ? "" : `<b>${r.cost}g</b> · acumulado ${r.cum_cost}g${fbEta(r) ? " · " + fbEta(r) : ""}${r.at_minute != null && r.status !== "ahora" ? ` · ~min ${Math.round(r.at_minute)}` : ""}`}</div>
+      </div></div>`).join("");
+  const rep = (b.replaces || []).length
+    ? `<div class="fb-rep">Reemplaza: ${b.replaces.map((x) => `<span><img src="${x.icon}" alt="">${esc(x.name)}</span>`).join("")}</div>` : "";
+  const buy = b.total_to_buy
+    ? `Por comprar <b>${b.total_to_buy}g</b>${b.missing_total > 0 ? ` · te faltan <b>${b.missing_total}g</b>${b.income ? ` (~${Math.round(b.missing_total / b.income)} min)` : ""}` : " · <b>ya te alcanza todo</b>"}`
+    : "Ya llevas todo lo que la IA recomienda.";
+  return `<div class="aib aib-ok">${title}
+    ${b.resumen ? `<div class="aib-res">${esc(b.resumen)}</div>` : ""}
+    ${muAiEco(b.eco)}
+    <div class="fb-sum">${buy}</div>
+    <div class="fb-list">${items}</div>${rep}
+    <div class="aib-cmp">Coincide con el motor en <b>${b.matches_engine}</b> de ${b.engine_total} objetos.</div>
+    <div class="mu-note">${esc(b.note || "")}</div></div>`;
+}
+
+
+/* ---- Conectar la IA desde la app: proveedor + modelo + clave (se guarda en tu PC) y prueba real ---- */
+const AI_PROVIDERS = [["gratis", "Gratis, sin clave (puede fallar)"], ["grok", "Grok (xAI)"], ["openai", "OpenAI"], ["openrouter", "OpenRouter"], ["ollama", "Ollama (local, gratis)"], ["custom", "Otro (compatible OpenAI)"]];
+const AI_DEF_MODEL = { gratis: "openai", grok: "grok-4", openai: "gpt-4o-mini", openrouter: "x-ai/grok-4", ollama: "llama3.1:8b", custom: "" };
+mu.cfg = mu.cfg || { loaded: false, provider: "gratis", model: "", key: "", url: "", hasKey: false, hint: "", msg: "", ok: null, busy: false };
+
+async function muLoadAiCfg() {
+  if (mu.cfg.loaded) return;
+  mu.cfg.loaded = true;
+  try {
+    const r = await fetch("/api/ai/config", { cache: "no-store" });
+    if (!r.ok) return;
+    const c = await r.json();
+    if (c.ai_provider) mu.cfg.provider = c.ai_provider;
+    mu.cfg.model = c.ai_model || "";
+    mu.cfg.url = c.ai_base_url || "";
+    mu.cfg.hasKey = !!c.has_key;
+    mu.cfg.hint = c.key_hint || "";
+    if (state && !(mu.typingUntil > Date.now())) render(state);
+  } catch (e) { /* servidor sin las rutas: el mensaje sale al guardar */ }
+}
+
+function muAiConfig(ai) {
+  muLoadAiCfg();
+  const c = mu.cfg;
+  const open = mu.cfgOpen !== undefined ? mu.cfgOpen : (ai.status === "off" || ai.status === "error");
+  const opts = AI_PROVIDERS.map(([id, n]) => `<option value="${id}" ${c.provider === id ? "selected" : ""}>${n}</option>`).join("");
+  const local = c.provider === "ollama" || c.provider === "gratis";
+  return `<details data-keep="muaicfg" ${open ? "open" : ""}><summary>⚙ Conectar la IA</summary>
+    <div class="ai-cfg">
+      <label>Proveedor <select data-aicfg="provider">${opts}</select></label>
+      <label>Modelo <input data-aicfg="model" type="text" value="${esc(c.model)}" placeholder="${esc(AI_DEF_MODEL[c.provider] || "nombre del modelo")}"></label>
+      ${c.provider === "custom" ? `<label>URL base <input data-aicfg="url" type="text" value="${esc(c.url)}" placeholder="https://…/v1"></label>` : ""}
+      ${local ? `<small>${c.provider === "gratis" ? "Sin clave ni instalar nada. Servicio público de terceros: puede ir lento o caerse; si pasa, manda el motor de la app." : "No necesita clave: solo tener Ollama abierto en este PC."}</small>`
+        : `<label>Clave API <input data-aicfg="key" type="password" autocomplete="off" value="${esc(c.key)}" placeholder="${c.hasKey ? "guardada " + esc(c.hint) + " (déjalo vacío para conservarla)" : "pega tu clave"}"></label>`}
+      <div class="ai-btns"><button type="button" data-aicfg-save ${c.busy ? "disabled" : ""}>${c.busy ? "Probando…" : "Guardar y probar"}</button></div>
+      ${c.msg ? `<div class="ai-cfg-msg ${c.ok ? "ok" : "bad"}">${esc(c.msg)}</div>` : ""}
+    </div></details>`;
+}
+
+async function muSaveAiCfg() {
+  const c = mu.cfg;
+  c.busy = true; c.msg = ""; c.ok = null; mu.typingUntil = 0;
+  if (state) render(state);
+  try {
+    const patch = { ai_provider: c.provider, ai_model: c.model, ai_base_url: c.url };
+    if (c.key) patch.ai_api_key = c.key;
+    const r = await fetch("/api/ai/config", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+    if (!r.ok) throw new Error(r.status === 404 ? "ruta" : "http " + r.status);
+    const saved = await r.json();
+    c.hasKey = !!(saved.config && saved.config.has_key);
+    c.hint = (saved.config && saved.config.key_hint) || "";
+    c.key = "";
+    const t = await (await fetch("/api/ai/test", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
+    c.ok = !!t.ok;
+    c.msg = t.ok ? `Conectada ✓ ${t.provider} · ${t.model} (${t.ms} ms)` : "No conecta: " + (t.error || "error desconocido");
+    if (t.ok) { mu.cfgOpen = false; muLiveTick(true); }
+  } catch (e) {
+    c.ok = false;
+    c.msg = e.message === "ruta"
+      ? "El servidor aún no tiene las rutas de la IA (/api/ai/config). Hay que conectarlas en server.py: mira LEEME_IA.md."
+      : "Sin conexión con el motor local.";
+  }
+  c.busy = false; mu.typingUntil = 0;
+  if (state) render(state);
+}
+
+/* ---- IA externa (Grok u otra): puntúa solo candidatos del motor; el motor sigue mandando ---- */
+function muAiBlock(ai) {
+  ai = ai || { status: "off" };
+  const badge = { ok: "IA ✓", pendiente: "IA pensando…", error: "IA sin respuesta · mando yo (motor)", off: "IA sin conectar" }[ai.status] || "";
+  const prov = ai.provider ? ` · ${esc(ai.provider)}${ai.local ? " (local, sin límites)" : ""}` : "";
+  const sum = ai.status === "ok"
+    ? ` <small>${ai.agree || 0} de acuerdo · ${ai.doubt || 0} en duda${ai.reordered ? " · reordenó alternativas" : ""}${(ai.sources || []).includes("pegada") ? " · incluye la opinión pegada" : ""}</small>` : "";
+  const alert = ai.alert ? `<div class="ai-alert">⚠ ${esc(ai.alert)}</div>` : "";
+  const props = (ai.proposals || []).map((p) => `<div class="ai-prop">${p.icon ? `<img src="${p.icon}" alt="">` : ""}<div><b>${esc(p.name)}</b>
+      <small>IA ${p.score}/100${p.gain_pct != null ? ` · motor +${p.gain_pct}%` : ""}</small><div class="ai-why">${esc(p.why || "")}</div></div></div>`).join("");
+  return `<div class="mu-ai ${esc(ai.status)}">
+    <div class="ai-head"><b>${badge}</b>${prov}${sum}</div>${alert}${props}
+    ${muAiConfig(ai)}
+    <details data-keep="muai" ${mu.aiOpen ? "open" : ""}><summary>Pegar lo que dice otra IA (Grok, etc.)</summary>
+      <textarea data-ai-text rows="3" placeholder="Pega aquí la respuesta de Grok u otra IA. Solo cuenta lo que mencione de los objetos candidatos.">${esc(mu.opinionDraft || "")}</textarea>
+      <div class="ai-btns"><button type="button" data-ai-use>Usar</button> <button type="button" data-ai-clear>Borrar</button></div>
+    </details></div>`;
+}
+
+async function muSendOpinion(text) {
+  try {
+    await fetch("/api/ai/opinion", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  } catch (e) { /* sin conexión: se reintenta al pulsar de nuevo */ }
+  mu.typingUntil = 0;
+  muLiveTick(true);
+}
+
+/* Tiempo real: cada pocos segundos pide el análisis en vivo. El servidor solo recalcula el motor si cambió
+   nivel / tramo de oro / objetos tuyos o rivales; si no, devuelve lo mismo y la UI no repinta (misma rev). */
+async function muLiveTick(force) {
+  if (mu.status !== "done" || mu.liveBusy) return;
+  if (!force && mu.liveSkip > 0) { mu.liveSkip--; return; }
+  if (!force && document.visibilityState !== "visible") return;
+  mu.liveBusy = true;
+  try {
+    const cur = mu.data && mu.data.rev;
+    const r = await fetch("/api/matchup/live" + (cur ? "?rev=" + encodeURIComponent(cur) : ""), { cache: "no-store" });
+    const j = await r.json();
+    if (j && j.ok && !j.unchanged && j.rev !== cur) {
+      j.at_minute = liveMinute(state);
+      mu.data = j;
+      if (state && !(mu.typingUntil > Date.now())) render(state);
+    }
+    mu.liveFails = 0;
+  } catch (e) { /* un fallo suelto no borra lo que ya hay en pantalla */
+    mu.liveFails = Math.min(5, (mu.liveFails || 0) + 1);
+    mu.liveSkip = mu.liveFails;                        // si el servidor se cae: espera cada vez más, sin saturarlo
+  }
+  mu.liveBusy = false;
+}
+setInterval(muLiveTick, 4000);
+
+document.addEventListener("input", (e) => {
+  const t = e.target.closest && e.target.closest("[data-ai-text]");
+  if (t) { mu.opinionDraft = t.value; mu.typingUntil = Date.now() + 10000; }
+  const f = e.target.closest && e.target.closest("[data-aicfg]");
+  if (f) {
+    const k = f.dataset.aicfg;
+    mu.cfg[k] = f.value;
+    mu.typingUntil = Date.now() + 30000;
+  }
+});
+document.addEventListener("change", (e) => {
+  const f = e.target.closest && e.target.closest("[data-aicfg='provider']");
+  if (f) { mu.cfg.provider = f.value; mu.cfg.model = ""; mu.cfg.msg = ""; mu.typingUntil = 0; if (state) render(state); }
+});
+document.addEventListener("toggle", (e) => {
+  if (e.target.matches && e.target.matches('details[data-keep="muai"]')) mu.aiOpen = e.target.open;
+  if (e.target.matches && e.target.matches('details[data-keep="muaicfg"]')) mu.cfgOpen = e.target.open;
+}, true);
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-aicfg-save]")) { muSaveAiCfg(); return; }
+  if (e.target.closest("[data-ai-use]")) { muSendOpinion(mu.opinionDraft || ""); return; }
+  if (e.target.closest("[data-ai-clear]")) { mu.opinionDraft = ""; muSendOpinion(""); return; }
+  if (e.target.closest("[data-mu-run]")) { runMatchup(); return; }
+  const o = e.target.closest("[data-mu-open]");
+  if (o) { mu.openRival = mu.openRival === o.dataset.muOpen ? null : o.dataset.muOpen; if (state) render(state); }
+});
+
+
+/* ---- Tarjetas de Inicio (solo en el diseño ancho; usan datos reales de st) ---- */
+function homeBanner() {
+  return `<div class="card hb">
+    <span class="hb-logo"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 20C13 11 12 5 15 4c3-1 7 7 8 15"/><path d="M31 20c4-9 5-15 2-16-3-1-7 7-8 15"/><path d="M12 31c0-8 5-13 12-13s12 5 12 13c0 6-5 11-12 11S12 37 12 31z"/><circle cx="19" cy="30" r="1.6" fill="currentColor"/><circle cx="29" cy="30" r="1.6" fill="currentColor"/><path d="M22 35.5l2 1.5 2-1.5"/></svg></span>
+    <div><h3>Tu partida, tu ventaja</h3>
+    <p>Análisis inteligente para cada decisión en League of Legends.</p>
+    <button type="button" class="hb-btn" data-go="economia">Ver recomendaciones &rarr;</button></div>
+  </div>`;
+}
+
+function homeSummary(st) {
+  const l = st.live;
+  const g = st.mygame;
+  const inGame = st.phase === "in_game" && l;
+  const phase = st.phase === "champ_select" ? "Selección de héroes" : inGame ? "En partida" : "Esperando partida";
+  const fase = st.parity && st.parity.econ && st.parity.econ.phase ? ` · fase ${st.parity.econ.phase}` : "";
+  let head;
+  if (st.champ) {
+    head = `<div class="hs-hero"><img src="/icon/champ/${encodeURIComponent(st.champ.key || st.champ.id)}.png" alt="">
+      <div><div class="hs-name">${esc(st.champ.name)}</div>
+      <div class="hs-sub">${esc(st.role_label || "")}${(g && g.lane && g.lane !== st.role_label) ? " · " + esc(g.lane) : ""} · ${esc(phase)}${esc(fase)}</div></div></div>`;
+  } else {
+    head = `<div class="hs-hero"><div><div class="hs-name" style="font-size:20px">Sin campeón detectado</div><div class="hs-sub">${esc(phase)}</div></div></div>`;
+  }
+  let tiles = "";
+  if (inGame) {
+    const k = l.kda || {};
+    const cs = g ? g.cs : null;
+    const t = (label, val, extra, cls, attr) => `<div class="hs-t ${cls || ""}"><small>${label}</small><b ${attr || ""}>${esc(val)}</b>${extra ? `<i>${extra}</i>` : ""}</div>`;
+    tiles = `<div class="hs-tiles">
+      ${t("Nivel", l.level)}${t("Oro", Math.floor(l.gold), "", "gold")}
+      ${t("Kills", k.kills ?? "—", "", "k")}${t("Muertes", k.deaths ?? "—", "", "d")}${t("Asist.", k.assists ?? "—", "", "a")}
+      ${t("CS", cs ?? "—", g && g.cs_min != null ? g.cs_min + "/min" : "")}${t("Tiempo", "--:--", "", "", "data-gclock")}</div>`;
+  } else {
+    tiles = `<div class="hs-sub" style="margin-top:10px">Los datos de nivel, oro, KDA, CS y minuto aparecen en cuanto empieza la partida.</div>`;
+  }
+  return `<div class="hs-title">Mi partida</div>${head}${tiles}`;
+}
+
+function homeBuild(st) {
+  const p = st.parity;
+  if (!p || !p.available) return st.champ ? secBuild(st) : "";
+  const rv = p.review;
+  const mark = { perfecto: "✓", deja: "=", cambia: "⇄", construccion: "…", "": "" };
+  const items = (p.owned || []).map((o) =>
+    `<div class="lb-it ${o.status}" title="${esc(o.name)}"><img src="${o.icon}" alt=""><i>${mark[o.status] || ""}</i></div>`).join("");
+  const best = p.builds && (p.builds.builds || [])[0];
+  const bestHtml = best
+    ? `<div class="hb2-best"><div class="hb2-lbl">Build recomendada: <b>${esc(best.title)}</b> <small>${best.gain_pct >= 0 ? "+" : ""}${best.gain_pct}% a tu paridad · ${best.total_cost}g${best.missing > 0 ? ` · faltan ${best.missing}g` : ""}</small></div>
+        <div class="bb-items">${(best.items || []).map((it, i) => `<div class="bb-it" title="${esc(it.name)} (${it.price}g)"><span class="bb-n">${i + 1}</span><img src="${it.icon}" alt=""><small>${esc(it.label)}</small>${viaMini(it.viability)}</div>`).join("")}</div></div>` : "";
+  const b = p.buy;
+  const next = b
+    ? `<div class="hb2-next"><span class="pa-buy-t">SIGUIENTE COMPRA</span><img src="${b.icon}" alt=""><div><b>${esc(b.name)}</b> ${viaChip(b.viability)}
+        <div class="hs-sub">${b.missing > 0 ? `Te faltan ${b.missing}g` : "Ya te alcanza"} · ${esc(b.why || "")}</div></div></div>`
+    : "";
+  return `<div class="hs-title">Build recomendada ${rv ? `<span class="hb2-v ${esc(rv.verdict)}">${esc(rv.summary || "")}</span>` : ""}</div>
+    <div class="lb-items">${items}</div>${next}${bestHtml}
+    <button type="button" class="hs-link" data-go="economia">Ver economía y compras &rarr;</button>`;
+}
+
+function homeRecs(st) {
+  const recs = [];
+  const p = st.parity;
+  if (p && p.available) {
+    if (p.buy) recs.push({ tone: "buy", go: "economia", t: `Compra: ${p.buy.name}`, d: `${p.buy.missing > 0 ? "Te faltan " + p.buy.missing + "g" : "Ya te alcanza"} · +${p.buy.gain_pct}% a tu duelo`, via: p.buy.viability });
+    const sw = p.review && (p.review.items || []).find((r) => r.status === "cambia" && r.swap);
+    if (sw) recs.push({ tone: "swap", go: "economia", t: `Cambia ${sw.name}`, d: `En vez de ${sw.name} pon ${sw.swap.name} (+${sw.swap.gain_main}% contra ${(p.rival || {}).champion || "el rival"})`, via: sw.swap.viability });
+    const ta = p.team_advantage;
+    if (ta) recs.push({ tone: ta.verdict, go: "campeones", t: `Ventaja contra su equipo: ${ta.score}`, d: `Estás ${ta.verdict}. Analiza el enfrentamiento para ver qué cambiar y comprar.` });
+  }
+  if (mu.data && mu.data.team && mu.data.team.summary) recs.push({ tone: "swap", go: "campeones", t: "Análisis de enfrentamiento", d: mu.data.team.summary });
+  const list = recs.slice(0, 4).map((r) => `<div class="rec ${esc(r.tone)}"><div class="rec-b"><b>${esc(r.t)}</b> ${viaChip(r.via)}<div class="hs-sub">${esc(r.d)}</div></div>
+    <button type="button" class="rec-go" data-go="${r.go}">Ver</button></div>`).join("");
+  if (!list) return "";
+  return `<div class="hs-title">Recomendaciones clave</div>${list}`;
+}
+
+function homeEcon(st) {
+  const l = st.live;
+  if (st.phase !== "in_game" || !l) return "";
+  const gold = Math.floor(l.gold);
+  const np = st.next_purchase;
+  let buy = "";
+  if (np && np.item) {
+    const price = np.item.price;
+    const falta = price ? Math.max(0, price - gold) : null;
+    buy = `<div class="hs-buy"><img src="${np.item.icon}" alt="">
+      <div><b>Mejor compra ahora: ${esc(np.item.name)}</b>
+      <div class="hs-sub">${price ? (falta === 0 ? `Ya puedes comprarlo (${price} oro)` : `Te faltan ${falta} oro (cuesta ${price})`) : ""}</div></div></div>`;
+  }
+  return `<div class="hs-title">Economía</div>
+    <div class="hs-big">${gold}</div><div class="hs-sub">oro actual</div>${buy}
+    <button type="button" class="hs-link" data-go="economia">Ver detalles &rarr;</button>`;
 }
 
 function buildSections(st) {
   const secs = [];
+  if (window.Shell && Shell.active()) {
+    secs.push(["home_banner", homeBanner()]);
+    secs.push(["home_summary", homeSummary(st)]);
+    secs.push(["home_build", homeBuild(st)]);
+    secs.push(["home_recs", homeRecs(st)]);
+    secs.push(["home_econ", homeEcon(st)]);
+  }
   secs.push(["hero", secHero(st)]);
   const hasMyGame = st.phase === "in_game" && !!st.mygame;
+  if (hasMyGame) secs.push(["matchup", secMatchup(st)]);
   if (hasMyGame) secs.push(["mygame", secMyGame(st)]);
   if (st.phase === "in_game") secs.push(["livebuild", liveBuildBox(st.parity)]);
   if (st.champ) {
@@ -1363,7 +1905,6 @@ function buildSections(st) {
   secs.push(["matchups", secMatchups(st)]);
   secs.push(["enemies", secEnemies(st)]);
   secs.push(["allies", secAllies(st)]);
-  secs.push(["needs", secNeeds(st)]);
   secs.push(["best_runes_now", secBestRunesNow(st)]);
   secs.push(["counter_core", secCounterCore(st)]);
     if (st.phase === "champ_select") {
@@ -1402,6 +1943,7 @@ function render(st) {
   dot.className = "dot" + (st.status === "ready" ? " on" : st.status === "loading" ? " load" : "");
   document.getElementById("mockBadge").classList.toggle("hidden", !st.mock);
 
+  gclockSync(st);
   const secs = buildSections(st);
   const orderKey = secs.map((s) => s[0]).join(",");
   if (orderKey !== lastOrderKey) {
@@ -1443,24 +1985,39 @@ function render(st) {
     for (const [id] of secs) main.appendChild(secEls.get(id));
     main._order = orderKey;
   }
+  if (window.Shell) Shell.applyView();
+  gclockPaint();
 }
 
 let lastPollOk = Date.now();
+let pollFails = 0;
 let pollBusy = false;
 
 async function poll() {
   if (pollBusy) return;
   pollBusy = true;
   try {
-    const r = await fetch("/api/state", { cache: "no-store" });
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 8000);   // una petición colgada no debe bloquear el poller
+    let r;
+    try { r = await fetch("/api/state", { cache: "no-store", signal: ctl.signal }); } finally { clearTimeout(to); }
     state = await r.json();
+    pollFails = 0;
+    document.body.classList.remove("offline");
     render(state);
     lastPollOk = Date.now();
+    if (window.Shell) Shell.setConn(true);
   } catch (e) {
     console.error("bunnylol poll:", e && e.stack || e);
-    main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexión con el motor local. Reinicia la app.</div></div>`;
-    secEls.clear();
-    lastOrderKey = "";
+    pollFails++;
+    if (window.Shell) Shell.setConn(false);
+    // Un fallo suelto (wifi del iPad) no borra la pantalla: se mantiene lo último y se avisa.
+    document.body.classList.add("offline");
+    if (pollFails >= 4 && !state) {
+      main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexión con el motor local. Reintentando… (si sigue así, reinicia la app)</div></div>`;
+      secEls.clear();
+      lastOrderKey = "";
+    }
   } finally {
     pollBusy = false;
   }
@@ -1482,7 +2039,7 @@ document.addEventListener("visibilitychange", () => {
 
 // Watchdog: si lleva rato sin datos viva, recarga para recuperarse
 setInterval(() => {
-  if (document.visibilityState === "visible" && Date.now() - lastPollOk > 15000) {
+  if (document.visibilityState === "visible" && Date.now() - lastPollOk > 45000) {
     location.reload();
   }
 }, 5000);
@@ -1553,6 +2110,7 @@ async function refreshHotkeyStatus() {
 function fillSettingsPanel() {
   const st = state;
   const cur = settings || (st && st.settings) || {};
+  if (window.BunnyTheme) BunnyTheme.mountSettings(document.getElementById("themeHost"));
   const roleBox = document.getElementById("setRoleChips");
   roleBox.innerHTML = roleChips(cur.role || (st && st.role));
   refreshAccess();
@@ -1621,6 +2179,7 @@ document.addEventListener("toggle", (e) => {
   if (!d || !d.dataset) return;
   if (d.dataset.keep === "bb") bbOpen = d.open;
   else if (d.dataset.keep === "lb") lbOpen = d.open;
+  else if (d.dataset.keep === "mu") mu.detailOpen = d.open;
 }, true);
 
 document.addEventListener("click", async (e) => {
@@ -1644,6 +2203,40 @@ document.addEventListener("click", async (e) => {
 });
 
 document.getElementById("btnGear").addEventListener("click", () => toggleSettings(true));
+document.addEventListener("click", (e) => {
+  const g = e.target.closest("[data-go]");
+  if (g && window.Shell) Shell.go(g.dataset.go);
+});
+if (window.Shell) {
+  Shell.init({
+    page: "overlay", container: "#main", openSettings: () => toggleSettings(true),
+    // Nombres y avisos propios del overlay
+    labels: { simulaciones: "Mi partida y build" },
+    empty: { simulaciones: "Aquí verás tu partida, tus 6 huecos y qué build te conviene en cuanto estés en juego." },
+    // Orden por prioridad dentro de cada apartado: lo que tienes que hacer YA va arriba.
+    order: (v) => {
+      if (!state) return null;
+      if (v === "campeones") return ["matchup", "target", "enemies", "matchups", "allies", "identity"];
+      if (v === "inteligencia") return ["situations", "counters", "target", "mystate", "live_meta", "tips", "stats", "identity", "pet", "live"];
+      if (v === "economia") return ["home_econ", "buynow", "livebuild", "build", "counter_core"];
+      if (v !== "objetos") return null;
+      return state.phase === "champ_select"
+        ? ["rune_plan", "runes", "rune_options", "rune_advice", "best_runes_now", "skills", "build", "buynow", "counter_core", "livebuild", "pet"]
+        : ["buynow", "livebuild", "build", "counter_core", "best_runes_now", "rune_plan", "rune_options", "rune_advice", "runes", "skills", "pet"];
+    },
+    map: {
+      inicio: ["home_summary", "home_build", "home_recs", "home_econ", "home_banner", "hero"],
+      inteligencia: ["identity", "stats", "pet", "mystate", "situations", "counters", "live_meta", "target", "tips", "live"],
+      economia: ["home_econ", "livebuild", "buynow", "build", "counter_core"],
+      campeones: ["matchup", "identity", "matchups", "enemies", "allies", "target"],
+      objetos: ["build", "buynow", "livebuild", "counter_core", "runes", "rune_plan", "rune_options", "rune_advice", "best_runes_now", "skills", "pet"],
+      simulaciones: ["mygame"],
+      datos: ["footer"],
+      historial: [],
+      diagnostico: [],
+    },
+  });
+}
 document.getElementById("btnSettingsClose").addEventListener("click", () => toggleSettings(false));
 document.getElementById("settingsPanel").addEventListener("click", (e) => {
   if (e.target.id === "settingsPanel") toggleSettings(false);
@@ -1687,7 +2280,7 @@ document.getElementById("btnQuit").addEventListener("click", async () => {
 
 function isDragTarget(el) {
   if (!el) return false;
-  return !!el.closest("button, select, input, textarea, a, [data-tip]");
+  return !!el.closest("button, select, input, textarea, a, [data-tip], [data-mu-open], [data-go]");
 }
 let _drag = null;
 let _pendDX = 0;

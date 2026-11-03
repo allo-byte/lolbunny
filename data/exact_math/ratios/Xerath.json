@@ -1,0 +1,22 @@
+{
+  "champion_id": "Xerath",
+  "champion_name": "Xerath",
+  "patch": "16.21.1",
+  "skills": {
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Xerath",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "physical",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

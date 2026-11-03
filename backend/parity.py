@@ -21,7 +21,7 @@ habilidades, runas, cooldowns ni posicionamiento; sirve para comparar
 compras entre sí, no para predecir una pelea concreta.
 """
 
-from . import combat, itemrules
+from . import combat, itemrules, viability
 from .ddragon import ddragon
 
 SOURCE = "matemáticas del juego sobre tus objetos y los del rival (sin winrate)"
@@ -74,6 +74,7 @@ def unit_stats(champ, level, item_ids):
         "pen_arm_pct": 0.0, "pen_arm_flat": 0.0, "pen_mr_pct": 0.0, "pen_mr_flat": 0.0,
         "gold": 0,
     }
+    arm_pct_src, mr_pct_src, ap_mult = [], [], 0.0
     for iid in item_ids or []:
         s = ddragon.item_stats(iid) or {}
         st["hp"] += _num(s.get("FlatHPPoolMod"))
@@ -83,11 +84,21 @@ def unit_stats(champ, level, item_ids):
         st["ap"] += _num(s.get("FlatMagicDamageMod"))
         st["as_bonus"] += _num(s.get("PercentAttackSpeedMod"))
         st["crit"] += _num(s.get("FlatCritChanceMod"))
-        st["pen_arm_pct"] += _num(s.get("PercentArmorPenetrationMod"))
+        # La penetración % de fuentes distintas se apila MULTIPLICATIVAMENTE
+        # (wiki oficial, "Armor penetration"); la plana (letalidad) se suma.
+        arm_pct_src.append(_num(s.get("PercentArmorPenetrationMod")))
+        mr_pct_src.append(_num(s.get("PercentMagicPenetrationMod")))
         st["pen_arm_flat"] += _num(s.get("FlatArmorPenetrationMod"))
-        st["pen_mr_pct"] += _num(s.get("PercentMagicPenetrationMod"))
         st["pen_mr_flat"] += _num(s.get("FlatMagicPenetrationMod"))
+        # El daño crítico adicional se suma al 175 % base (aditivo).
+        st["crit_mult"] += _num(s.get("PercentCritDamageMod"))
+        ap_mult += _num(s.get("PercentAbilityPowerMultMod"))
         st["gold"] += ddragon.item_price(iid)
+    st["pen_arm_pct"] = combat.stack_pct(arm_pct_src)
+    st["pen_mr_pct"] = combat.stack_pct(mr_pct_src)
+    # Efectos del tipo "aumenta tu AP total en X %" (Rabadon) multiplican el AP total.
+    if ap_mult:
+        st["ap"] *= 1.0 + ap_mult
     st["level"] = level
     st["w_ad"], st["w_ap"] = damage_weights(champ)
     return st
@@ -96,9 +107,18 @@ def unit_stats(champ, level, item_ids):
 def damage_weights(champ):
     """Cuánto cuenta cada punto de AD y de AP para ESTE campeón (0..1).
 
-    Sale de la parte de daño mágico de sus habilidades (profiles.ratio_magic):
+    Combina tres señales:
+      1. ratio_magic de los textos oficiales de habilidades (profiles).
+      2. attackrange: a distancia => más daño de autoataque (AD).
+      3. stats base: AD base alto y AP base bajo => campeón físico.
     con 50/50 los dos valen 1 (híbrido); con 90/10 el tipo menor vale 0.2.
-    Estimación por menciones en los textos oficiales, no ratios exactos."""
+    """
+    tags = set((champ or {}).get("tags") or [])
+    stats = (champ or {}).get("stats") or {}
+    base_ad = float(stats.get("attackdamage") or 0)
+    base_ap = float(stats.get("spellblock") or 0)  # no es AP, pero ayuda a distinguir
+    attackrange = float(stats.get("attackrange") or 0)
+
     p_ap = None
     try:
         from . import profiles
@@ -108,8 +128,18 @@ def damage_weights(champ):
             p_ap = float(prof.get("ratio_magic"))
     except Exception:
         p_ap = None
+
+    # Ajuste por rango de ataque: a distancia => más daño físico (autoataques).
+    if attackrange >= 500:
+        p_ap = (p_ap if p_ap is not None else 0.5) * 0.75
+    elif attackrange >= 350:
+        p_ap = (p_ap if p_ap is not None else 0.5) * 0.85
+
+    # Ajuste por stats base: AD base alto => más físico.
+    if base_ad >= 65:
+        p_ap = (p_ap if p_ap is not None else 0.5) * 0.8
+
     if p_ap is None:
-        tags = set((champ or {}).get("tags") or [])
         p_ap = 0.9 if "Mage" in tags else 0.05 if "Marksman" in tags else 0.25
     p_ap = min(max(p_ap, 0.0), 1.0)
     return min(1.0, 2.0 * (1.0 - p_ap)), min(1.0, 2.0 * p_ap)
@@ -170,6 +200,18 @@ def _catalog_finals():
         if tags & {"Consumable", "Trinket", "Boots", "GoldPer", "Jungle", "Lane"}:
             continue
         out.append(int(sid))
+    # El catálogo trae variantes del MISMO objeto con otro ID (p. ej. The Collector:
+    # 6676 y 667666, ambos válidos en la Grieta). Sin deduplicar, una build podía
+    # llevar el mismo objeto dos veces. Se conserva el ID más bajo (el oficial).
+    seen, dedup = {}, []
+    for iid in sorted(out):
+        name = ((ddragon.items or {}).get(str(iid)) or {}).get("name")
+        if name:
+            if name in seen:
+                continue
+            seen[name] = iid
+        dedup.append(iid)
+    out = dedup
     _FINALS["ver"], _FINALS["ids"] = ddragon.version, out
     return out
 
@@ -210,6 +252,128 @@ def _candidates(overview, owned, me_prof, enemy_profiles):
     return out, proven
 
 
+
+def _duel_list(live, me, rival_pick=None):
+    """Un duelo por rival: tu build actual contra la suya (paridad)."""
+    duels = []
+    for p in live["players"]:
+        if p.get("mine"):
+            continue
+        ch = find_champ(p.get("champion"), p.get("champion_id"))
+        if not ch:
+            continue
+        rv_items = [int(i) for i in (p.get("items") or [])]
+        rv = unit_stats(ch, int(p.get("level") or 1), rv_items)
+        r = parity(me, rv)
+        duels.append({"champion": ch["name"], "icon": f"/icon/champ/{ch.get('key')}.png",
+                      "r": round(r, 2), "verdict": _verdict(r), "gold": rv["gold"],
+                      "hp": round(rv["hp"]), "armor": round(rv["armor"]), "mr": round(rv["mr"]),
+                      "_stats": rv, "_pick": p is rival_pick, "_player": p})
+    return duels
+
+
+def _rank_candidates(me_champ, level, owned, duels, main, cands, proven):
+    """Todos los objetos candidatos ordenados de mejor a peor contra `main` y la media.
+    Devuelve (lista de (r_main, r_avg, id), base_avg)."""
+    recs = []
+    for iid in cands:
+        me2 = _with_item(me_champ, level, owned, iid)
+        # El objeto debe ayudar contra el rival principal Y no empeorar la media.
+        r_main = parity(me2, main["_stats"])
+        r_avg = sum(parity(me2, d["_stats"]) for d in duels) / len(duels)
+        recs.append((r_main, r_avg, iid))
+    base_avg = sum(d["r"] for d in duels) / len(duels)
+
+    def score(t):
+        bonus = 1.03 if t[2] in proven else 1.0     # desempate a favor de lo que ya usa tu campeón
+        return -(t[0] / max(main["r"], 0.01) + 0.5 * (t[1] / max(base_avg, 0.01))) * bonus
+    recs.sort(key=score)
+    return recs, base_avg
+
+
+def _buy_entry(me, me_champ, level, owned, why_stats, iid, r_after, r_before, r_avg, base_avg,
+               proven, gold_now, ctx=None):
+    """Ficha de un objeto recomendado (con su viabilidad). None si el objeto no existe."""
+    info = itemrules.item_info(iid)
+    if not info:
+        return None
+    price = info.get("price") or 0
+    nc = net_cost(iid, owned)
+    missing = max(0, int(nc - gold_now))
+    gain_pct = round((r_after / max(r_before, 0.01) - 1) * 100)
+    gain_team = round((r_avg / max(base_avg, 0.01) - 1) * 100)
+    ctx = ctx or {}
+    e = {
+        "id": iid, "name": info["name"], "icon": info["icon"], "price": price,
+        "r_after": round(r_after, 2),
+        "label": item_label(iid),
+        "proven": iid in proven,
+        "gain_pct": gain_pct,
+        "gain_team": gain_team,
+        "net_cost": nc,
+        "missing": missing,
+        "step": next_step(iid, owned, gold_now) if nc > gold_now else None,
+        "why": _why(me, why_stats, me_champ, level, owned, iid),
+        "viability": viability.rate(gain_pct, gain_team, price, nc, missing, ctx.get("income"),
+                                    ctx.get("minute"), iid in proven),
+    }
+    return e
+
+
+_CTX = {"valid": False}
+
+
+def _econ_ctx(live, owned, gold_now):
+    """Contexto económico real para la viabilidad: minuto y ritmo de oro estimado."""
+    minute = None
+    try:
+        gt = float((live or {}).get("game_time") or 0)
+        minute = gt / 60.0 if gt > 0 else None
+    except Exception:
+        pass
+    income = None
+    try:
+        from . import builder
+
+        income = builder._income(live, owned, gold_now)
+    except Exception:
+        pass
+    return {"minute": minute, "income": income}
+
+
+def rate_item(iid):
+    """Viabilidad de CUALQUIER objeto contra la partida actual (usa el último plan calculado).
+    None si no hay plan o el objeto ya lo llevas."""
+    c = _CTX
+    if not c.get("valid"):
+        return None
+    iid = int(iid)
+    e = c["entries"].get(iid)
+    if e:
+        return e["viability"]
+    if iid in c["owned"]:
+        return None
+    me2 = _with_item(c["me_champ"], c["level"], c["owned"], iid)
+    main, duels = c["main"], c["duels"]
+    r_main = parity(me2, main["_stats"])
+    r_avg = sum(parity(me2, d["_stats"]) for d in duels) / len(duels)
+    e = _buy_entry(c["me"], c["me_champ"], c["level"], c["owned"], main["_stats"], iid, r_main,
+                   main["r"], r_avg, c["base_avg"], c["proven"], c["gold_now"], c["ctx"])
+    return viability.mark_single(e)["viability"] if e else None
+
+
+def _rate_builds(builds, gold_now, ctx, proven):
+    """Añade la viabilidad a cada objeto de las builds completas (solo etiqueta lo poco conveniente)."""
+    for b in ((builds or {}).get("builds") or []):
+        for it in b.get("items") or []:
+            price = it.get("price") or 0
+            gm = it.get("gain_pct") or 0
+            missing = max(0, int(price - gold_now))
+            v = viability.rate(gm, gm, price, price, missing, ctx.get("income"), ctx.get("minute"),
+                               int(it["id"]) in proven)
+            it["viability"] = viability.mark_single({"viability": v})["viability"]
+
+
 def plan(live, overview, me_prof, enemy_profiles, rival_pick, lane_info=None):
     """Plan completo en partida, o None si faltan datos."""
     if not live or not live.get("players"):
@@ -242,20 +406,7 @@ _MEMO = {"key": None, "out": None}
 def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, owned):
     me = me_champ.stats(owned)
 
-    duels = []
-    for p in live["players"]:
-        if p.get("mine"):
-            continue
-        ch = find_champ(p.get("champion"), p.get("champion_id"))
-        if not ch:
-            continue
-        rv_items = [int(i) for i in (p.get("items") or [])]
-        rv = unit_stats(ch, int(p.get("level") or 1), rv_items)
-        r = parity(me, rv)
-        duels.append({"champion": ch["name"], "icon": f"/icon/champ/{ch.get('key')}.png",
-                      "r": round(r, 2), "verdict": _verdict(r), "gold": rv["gold"],
-                      "hp": round(rv["hp"]), "armor": round(rv["armor"]), "mr": round(rv["mr"]),
-                      "_stats": rv, "_pick": p is rival_pick})
+    duels = _duel_list(live, me, rival_pick)
     if not duels:
         return {"available": True, "no_rivals": True, "owned": _owned_view(owned, None),
                 "review": None, "buy": None, "alternatives": [], "rival": None, "others": [],
@@ -267,57 +418,40 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
 
     cands, proven = _candidates(overview, owned, me_prof, enemy_profiles)
     gold_now = float(live.get("gold") or 0)
-    recs = []
-    for iid in cands:
-        me2 = _with_item(me_champ, level, owned, iid)
-        # El objeto debe ayudar contra el rival principal Y no empeorar la media.
-        r_main = parity(me2, main["_stats"])
-        r_avg = sum(parity(me2, d["_stats"]) for d in duels) / len(duels)
-        recs.append((r_main, r_avg, iid))
-    base_avg = sum(d["r"] for d in duels) / len(duels)
-    def score(t):
-        bonus = 1.03 if t[2] in proven else 1.0     # desempate a favor de lo que ya usa tu campeón
-        return -(t[0] / max(main["r"], 0.01) + 0.5 * (t[1] / max(base_avg, 0.01))) * bonus
-    recs.sort(key=score)
-    def entry(r_main, iid):
-        info = itemrules.item_info(iid)
-        if not info:
-            return None
-        price = info.get("price") or 0
-        return {
-            "id": iid, "name": info["name"], "icon": info["icon"], "price": price,
-            "r_after": round(r_main, 2),
-            "label": item_label(iid),
-            "proven": iid in proven,
-            "gain_pct": round((r_main / max(main["r"], 0.01) - 1) * 100),
-            "net_cost": net_cost(iid, owned),
-            "missing": max(0, int(net_cost(iid, owned) - gold_now)),
-            "step": next_step(iid, owned, gold_now) if net_cost(iid, owned) > gold_now else None,
-            "why": _why(me, main["_stats"], me_champ, level, owned, iid),
-        }
+    recs, base_avg = _rank_candidates(me_champ, level, owned, duels, main, cands, proven)
+    ctx = _econ_ctx(live, owned, gold_now)
+    # Una ficha por candidato (con su viabilidad); buy / alternativas / ranking comparten objetos.
+    entries = {}
+    for r_main, r_avg, iid in recs:
+        e = _buy_entry(me, me_champ, level, owned, main["_stats"], iid, r_main, main["r"], r_avg,
+                       base_avg, proven, gold_now, ctx)
+        if e:
+            entries[iid] = e
+    ranking = sorted(entries.values(), key=lambda e: -e["viability"]["pct"])
+    viability.mark_group(ranking)
 
     top = []
-    for r_main, _r_avg, iid in recs:
-        e = entry(r_main, iid)
-        if e:
-            top.append(e)
+    for _r_main, _r_avg, iid in recs:
+        if iid in entries:
+            top.append(entries[iid])
             break
     best = top[0] if top and top[0]["gain_pct"] > 0 else None
     # Lo mejor de cada tipo (híbrido, AP, AD, defensa) además del primero.
     alts, used = [], {top[0]["id"]} if top else set()
     for label in ("AD+AP", "AP", "AD", "Defensa"):
-        for r_main, _r_avg, iid in recs:
+        for _r_main, _r_avg, iid in recs:
             if iid in used or item_label(iid) != label:
                 continue
-            e = entry(r_main, iid)
+            e = entries.get(iid)
             if e and (e["gain_pct"] > 0 or label == "AD+AP"):
                 alts.append(e)
                 used.add(iid)
             break
         if len(alts) >= 3:
             break
+    _CTX.update(valid=False)  # se rellena al final, cuando todo está calculado
     try:
-        review = _review(me_champ, level, owned, duels, main, proven, gold_now)
+        review = _review(me_champ, level, owned, duels, main, proven, gold_now, ctx)
         if review is not None:
             review["data_patch"] = {
                 "ddragon": ddragon.version,
@@ -334,9 +468,20 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
     except Exception as e:  # el buscador nunca debe tirar el resto del plan
         print(f"[parity] builder falló: {e!r}")
         builds = None
+    ugg_next = _ugg_next(overview, owned)
+    duels_c = [dict(d) for d in duels]           # copias: abajo se les quitan las claves privadas
+    _CTX.update(valid=True, me=me, me_champ=me_champ, level=level, owned=list(owned),
+                duels=duels_c, main=duels_c[duels.index(main)], base_avg=base_avg, proven=proven,
+                gold_now=gold_now, ctx=ctx, entries=entries)
+    if ugg_next:
+        v = rate_item(ugg_next["id"])
+        if v:
+            ugg_next["viability"] = v
+    _rate_builds(builds, gold_now, ctx, proven)
     for d in duels:
         d.pop("_stats", None)
         d.pop("_pick", None)
+        d.pop("_player", None)
     main_out = {k: v for k, v in main.items() if not k.startswith("_")}
     return {
         "available": True,
@@ -345,11 +490,14 @@ def _plan(live, overview, me_prof, enemy_profiles, rival_pick, me_champ, level, 
         "me": {"hp": round(me["hp"]), "armor": round(me["armor"]), "mr": round(me["mr"]),
                "gold": me["gold"]},
         "buy": best,
-        "ugg_next": _ugg_next(overview, owned),
+        "ugg_next": ugg_next,
+        "ranking": ranking,
         "alternatives": alts,
         "review": review,
         "builds": builds,
         "owned": _owned_view(owned, review),
+        "econ": {"minute": ctx.get("minute"), "income": ctx.get("income"),
+                 "phase": viability.phase_of(ctx.get("minute")), "gold": int(gold_now)},
         "exact": bool(getattr(me_champ, "is_exact", False)),
         "source": SOURCE,
         "note": ("Duelo simplificado con tus objetos y los del rival: sin habilidades, runas, "
@@ -414,7 +562,7 @@ def _blend(me_stats, duels, main):
     return r_main, r_avg
 
 
-def _review(me_champ, level, owned, duels, main, proven, gold_now):
+def _review(me_champ, level, owned, duels, main, proven, gold_now, ctx=None):
     """Para cada objeto que llevas: ¿hay uno mejor para ESTA partida y cuánto mejora?"""
     base_main, base_avg = _blend(me_champ.stats(owned), duels, main)
     base_main = max(base_main, 0.01)
@@ -459,12 +607,16 @@ def _review(me_champ, level, owned, duels, main, proven, gold_now):
                 if ci:
                     # coste neto: componentes que ya tienes descontados, menos la venta del objeto que cambias
                     cost = int(max(net_cost(c, without) - SELL_BACK * (row["price"]), 0))
-                    row.update(
-                        status=status,
-                        swap={"id": c, "name": ci["name"], "icon": ci["icon"], "price": ci.get("price") or 0,
-                              "label": item_label(c), "proven": c in proven,
-                              "gain_main": round(gain_main), "gain_team": round(gain_team),
-                              "cost": cost, "missing": max(0, int(cost - gold_now))})
+                    swap = {"id": c, "name": ci["name"], "icon": ci["icon"], "price": ci.get("price") or 0,
+                            "label": item_label(c), "proven": c in proven,
+                            "gain_main": round(gain_main), "gain_team": round(gain_team),
+                            "cost": cost, "missing": max(0, int(cost - gold_now))}
+                    cx = ctx or {}
+                    swap["viability"] = viability.rate(
+                        swap["gain_main"], swap["gain_team"], swap["price"], cost, swap["missing"],
+                        cx.get("income"), cx.get("minute"), c in proven)
+                    viability.mark_single(swap)
+                    row.update(status=status, swap=swap)
         rows.append(row)
     to_fix = [r for r in rows if r["status"] == "cambia"]
     keep = [r for r in rows if r["status"] == "deja"]
@@ -586,6 +738,12 @@ class MeModel:
         out = dict(self.exact)
         for k in _ADDITIVE:
             out[k] = self.exact[k] + est[k] - self.cur_est[k]
+        # La penetración % no es aditiva entre fuentes: se toma la combinada
+        # multiplicativamente de los objetos (la que ya calcula unit_stats).
+        out["pen_arm_pct"] = est["pen_arm_pct"]
+        out["pen_mr_pct"] = est["pen_mr_pct"]
+        # Daño crítico: diferencia entre la build nueva y la actual sobre el valor real.
+        out["crit_mult"] = self.exact.get("crit_mult", est["crit_mult"]) + est["crit_mult"] - self.cur_est["crit_mult"]
         out["as_bonus"] = max(out["as_bonus"], -0.9)
         out["crit"] = min(max(out["crit"], 0.0), 1.0)
         out["pen_arm_pct"] = max(out["pen_arm_pct"], 0.0)
@@ -638,3 +796,56 @@ def next_step(item_id, owned, gold_now):
     if not info:
         return None
     return {"id": best[1], "name": info["name"], "icon": info["icon"], "price": best[0]}
+
+
+# ---------------------------------------------------------------------------
+# Ventaja global contra el equipo rival (puntuación de contrarrestar)
+# ---------------------------------------------------------------------------
+def team_advantage(me_stats, enemy_models):
+    """Puntuación global de ventaja contra TODO el equipo rival.
+
+    `me_stats` = tus estadísticas (parity.unit_stats o MeModel.stats).
+    `enemy_models` = lista de {"stats": {...}, "hp":..., "armor":..., "mr":...}
+    uno por rival, ya proyectados con sus objetos reales.
+
+    Devuelve:
+      - "score": R medio ponderado por amenaza de cada rival (1.0 = igualados,
+        >1.0 vas por delante, <1.0 vas por detrás).
+      - "verdict": "delante" / "detras" / "parejo".
+      - "duels": lista de {champion, r, verdict} uno por rival.
+    """
+    if not enemy_models:
+        return {"score": 1.0, "verdict": "parejo", "duels": []}
+
+    # Amenaza de cada rival = cuánto daño te hace respecto a tu vida.
+    threats = [damage_through(e["stats"], me_stats) / max(me_stats["hp"], 1.0)
+               for e in enemy_models]
+    tot = sum(threats) or 1.0
+    weights = [t / tot for t in threats]
+
+    duels = []
+    weighted_r = 0.0
+    for w, e in zip(weights, enemy_models):
+        r = parity(me_stats, e["stats"])
+        duels.append({
+            "champion": e.get("name", "rival"),
+            "r": round(r, 2),
+            "verdict": _verdict(r),
+            "weight": round(w, 3),
+        })
+        weighted_r += w * r
+
+    score = round(weighted_r, 2)
+    if score >= AHEAD:
+        verdict = "delante"
+    elif score <= BEHIND:
+        verdict = "detras"
+    else:
+        verdict = "parejo"
+
+    return {
+        "score": score,
+        "verdict": verdict,
+        "duels": duels,
+        "source": "matemáticas del juego sobre tus objetos y los del rival (sin winrate)",
+    }

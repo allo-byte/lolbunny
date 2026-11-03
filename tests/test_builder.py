@@ -30,15 +30,19 @@ class Builder(unittest.TestCase):
     def setUp(self):
         ddragon.items = mk_items(); ddragon.version = "b"
         parity._FINALS.update(ver=None, ids=[]); parity._MEMO.update(key=None, out=None)
+        self._item_price = ddragon.item_price
+        self._is_boots = itemrules.is_boots
+        self._pp = profiles.profile
         itemrules.is_boots = lambda i: False
         itemrules.item_info = lambda i, source=None: {"id": int(i), "name": f"I{i}", "icon": "", "price": 3000}
         ddragon.item_price = lambda i: 350 if int(i) == 900 else 3000
-        self._pp = profiles.profile
         self.ratio = 0.5
         profiles.profile = lambda key: {"has_texts": True, "ratio_magic": self.ratio}
 
     def tearDown(self):
         profiles.profile = self._pp
+        ddragon.item_price = self._item_price
+        itemrules.is_boots = self._is_boots
 
     def run_plan(self, ratio, owned, rival_items):
         self.ratio = ratio

@@ -27,14 +27,29 @@ posicionamiento. Compara builds entre sí; no predice una pelea concreta.
 
 import math
 
-from . import combat, itemrules, parity
+from . import combat, itemrules, parity, role_itemization
 from .ddragon import ddragon
 
 SLOTS = 6                 # huecos de objetos (las botas ocupan uno)
-BEAM = 14                 # builds parciales que se conservan por hueco
-POOL_TOP = 36             # objetos del catálogo que entran a la búsqueda
+BEAM = 24                 # haz más ancho: conserva más rutas de sinergia entre objetos
+POOL_TOP = 48             # catálogo candidato más amplio por objetivo
 HEAL_LIFESTEAL = 0.08     # un rival con ≥8% robo de vida se considera que se cura
 MIXED_MIN_WEIGHT = 0.3    # el tipo de daño menor debe pesar ≥30% para proponer mixta
+
+# Fases de juego y pesos de daño vs supervivencia.
+#   early : objetos baratos, daño inmediato, poca defensa (nivel ~5-8)
+#   mid   : daño + aguante equilibrado, objetos intermedios (nivel ~9-14)
+#   late  : máximo daño y escalado, defensa según el rival (nivel 15-18)
+PHASES = ("early", "mid", "late")
+PHASE_WEIGHTS = {
+    "early": {"offense": 0.70, "survival": 0.30},
+    "mid":   {"offense": 0.50, "survival": 0.50},
+    "late":  {"offense": 0.40, "survival": 0.60},
+}
+# Precio máximo por objeto en fase early (objetos completos de bajo coste).
+EARLY_MAX_PRICE = 3100
+# En fase mid se permite hasta este precio (objetos completos estándar).
+MID_MAX_PRICE = 3500
 
 
 # --- Estabilidad: la build recomendada NO cambia por ruido -------------------
@@ -122,32 +137,45 @@ def _weights(me_stats, enemies):
     return [t / tot for t in th]
 
 
-def _score(kind, me2, enemies, w):
-    """Puntuación de una build según el objetivo (mayor = mejor)."""
+def _score(kind, me2, enemies, w, phase="mid"):
+    """Puntuación de una build según el objetivo (mayor = mejor).
+
+    `phase` ajusta el equilibrio entre daño y supervivencia:
+    early premia más el daño inmediato, late premia más el aguante."""
     mine = [parity.damage_through(me2, e["stats"]) / max(e["stats"]["hp"], 1.0) for e in enemies]
     theirs = [parity.damage_through(e["stats"], me2) / max(me2["hp"], 1.0) for e in enemies]
+    pw = PHASE_WEIGHTS.get(phase, PHASE_WEIGHTS["mid"])
     if kind == "ofensiva":
-        return sum(wi * math.log(max(m, 1e-6)) for wi, m in zip(w, mine))
+        return sum(wi * math.log(max(m, 1e-6)) for wi, m in zip(w, mine)) * pw["offense"]
     if kind == "defensiva":
         # pesa más sobrevivir (0.65) que pegar (0.35)
         return sum(wi * (0.35 * math.log(max(m, 1e-6)) - 0.65 * math.log(max(t, 1e-6)))
-                   for wi, m, t in zip(w, mine, theirs))
+                   for wi, m, t in zip(w, mine, theirs)) * pw["survival"]
     # equilibrada y mixta: paridad R media ponderada (log = ganar/perder simétrico)
-    return sum(wi * (math.log(max(m, 1e-6)) - math.log(max(t, 1e-6))) for wi, m, t in zip(w, mine, theirs))
+    return sum(wi * (pw["offense"] * math.log(max(m, 1e-6)) - pw["survival"] * math.log(max(t, 1e-6)))
+               for wi, m, t in zip(w, mine, theirs))
+
 
 
 def _weighted_r(me2, enemies, w):
     return sum(wi * parity.parity(me2, e["stats"]) for wi, e in zip(w, enemies))
 
 
-def _pool(model, base_items, enemies, w, owned_set):
-    """Objetos candidatos: los mejores por objetivo + diversidad de tipos."""
+def _pool(model, base_items, enemies, w, owned_set, heals=False, phase="mid", price_cap=None):
+    """Objetos candidatos: los mejores por objetivo + diversidad de tipos.
+
+    `phase` ajusta el catálogo: en early solo objetos baratos y eficientes;
+    en mid y late se abre al catálogo completo. `price_cap` impone un techo
+    de precio si se pasa explícitamente (usado en fase early).
+    """
     cands = [i for i in parity._catalog_finals()
              if i not in owned_set and not itemrules.is_boots(i)]
+    if phase == "early" and price_cap:
+        cands = [i for i in cands if ddragon.item_price(i) <= price_cap]
     scored = []
     for iid in cands:
         me2 = model.stats(base_items + [iid])
-        scored.append((iid, {k: _score(k, me2, enemies, w) for k in ("equilibrada", "ofensiva", "defensiva")}))
+        scored.append((iid, {k: _score(k, me2, enemies, w) + role_itemization.score_adjustment(model, base_items + [iid], enemies, heals=heals) for k in ("equilibrada", "ofensiva", "defensiva")}))
     keep = set()
     for k, n in (("equilibrada", POOL_TOP), ("ofensiva", 14), ("defensiva", 14)):
         for iid, s in sorted(scored, key=lambda t: -t[1][k])[:n]:
@@ -164,7 +192,7 @@ def _pool(model, base_items, enemies, w, owned_set):
     return sorted(keep)
 
 
-def _search(kind, model, base_items, free, pool, enemies, w, constraint=None):
+def _search(kind, model, base_items, free, pool, enemies, w, constraint=None, heals=False, phase="mid"):
     beam = [(0.0, [])]
     for _ in range(free):
         nxt = {}
@@ -177,7 +205,7 @@ def _search(kind, model, base_items, free, pool, enemies, w, constraint=None):
                 if key in nxt:
                     continue
                 me2 = model.stats(base_items + c2)
-                nxt[key] = (_score(kind, me2, enemies, w), c2)
+                nxt[key] = (_score(kind, me2, enemies, w, phase=phase) + role_itemization.score_adjustment(model, base_items + c2, enemies, heals=heals), c2)
         beam = sorted(nxt.values(), key=lambda t: -t[0])[:BEAM]
         if not beam:
             break
@@ -186,7 +214,7 @@ def _search(kind, model, base_items, free, pool, enemies, w, constraint=None):
         if ok:
             return ok
         # Ninguna del haz cumple: se repara la mejor cambiando UN objeto
-        # (el que menos puntúa al quitarlo) por el que haga cumplir la regla.
+        # (el que menos puntúa al quitarlo) por el que hace cumplir la regla.
         fixed = {}
         for _s, combo in beam[:5]:
             for pos in range(len(combo)):
@@ -196,7 +224,7 @@ def _search(kind, model, base_items, free, pool, enemies, w, constraint=None):
                     c2 = combo[:pos] + [iid] + combo[pos + 1:]
                     if constraint(c2):
                         key = tuple(sorted(c2))
-                        fixed[key] = (_score(kind, model.stats(base_items + c2), enemies, w), c2)
+                        fixed[key] = (_score(kind, model.stats(base_items + c2), enemies, w, phase=phase) + role_itemization.score_adjustment(model, base_items + c2, enemies, heals=heals), c2)
         if fixed:
             return sorted(fixed.values(), key=lambda t: -t[0])[:BEAM]
     return beam
@@ -217,12 +245,12 @@ def _has_need(items, need):
     return any(need in itemrules._needs(i, ddragon.item(i) or {}) for i in items)
 
 
-def _order(model, base_items, combo, kind, enemies, w):
+def _order(model, base_items, combo, kind, enemies, w, heals=False, phase="mid"):
     """Orden de compra: primero lo que más rinde por oro (con lo que ya llevas)."""
     left, have, out = list(combo), list(base_items), []
     while left:
-        cur = _score(kind, model.stats(have), enemies, w)
-        best = max(left, key=lambda i: (_score(kind, model.stats(have + [i]), enemies, w) - cur)
+        cur = _score(kind, model.stats(have), enemies, w, phase=phase) + role_itemization.score_adjustment(model, have, enemies, heals=heals)
+        best = max(left, key=lambda i: (_score(kind, model.stats(have + [i]), enemies, w, phase=phase) + role_itemization.score_adjustment(model, have + [i], enemies, heals=heals) - cur)
                    / max(ddragon.item_price(i), 1))
         out.append(best)
         left.remove(best)
@@ -230,12 +258,12 @@ def _order(model, base_items, combo, kind, enemies, w):
     return out
 
 
-def _describe(model, base_items, order, kind, enemies, w, gold_now, owned):
+def _describe(model, base_items, order, kind, enemies, w, gold_now, owned, heals=False, phase="mid"):
     rows, have = [], list(base_items)
     for iid in order:
-        before = _score("equilibrada", model.stats(have), enemies, w)
+        before = _score("equilibrada", model.stats(have), enemies, w, phase=phase) + role_itemization.score_adjustment(model, have, enemies, heals=heals)
         have.append(iid)
-        after = _score("equilibrada", model.stats(have), enemies, w)
+        after = _score("equilibrada", model.stats(have), enemies, w, phase=phase) + role_itemization.score_adjustment(model, have, enemies, heals=heals)
         info = itemrules.item_info(iid) or {}
         rows.append({
             "id": iid, "name": info.get("name") or ddragon.item_name(iid),
@@ -260,7 +288,7 @@ def _comp_view(cid, owned_left):
             "price": ddragon.item_price(cid), "owned": have}
 
 
-def _cheap_plan(model, base_items, order, kind, enemies, w, gold_now, owned):
+def _cheap_plan(model, base_items, order, kind, enemies, w, gold_now, owned, heals=False, phase="mid"):
     """La misma build en COMPONENTES (objetos iniciales) para jugar con poco oro.
 
     parts: por cada objeto de la build, los componentes directos que lo forman
@@ -280,12 +308,15 @@ def _cheap_plan(model, base_items, order, kind, enemies, w, gold_now, owned):
     # los componentes que ya llevas cuentan como parte de tu build actual
     taken = set()
     while True:
-        cur = _score(kind, model.stats(have), enemies, w)
+        cur = (_score(kind, model.stats(have), enemies, w, phase=phase)
+               + role_itemization.score_adjustment(model, have, enemies, heals=_heal_threat(enemies)))
         best = None
         for n, (iid, v) in enumerate(cands):
             if n in taken or v["price"] <= 0 or v["price"] > budget:
                 continue
-            gain = _score(kind, model.stats(have + [v["id"]]), enemies, w) - cur
+            next_have = have + [v["id"]]
+            gain = (_score(kind, model.stats(next_have), enemies, w, phase=phase)
+                    + role_itemization.score_adjustment(model, next_have, enemies, heals=_heal_threat(enemies)) - cur)
             val = gain / v["price"]
             if best is None or val > best[0]:
                 best = (val, n, iid, v)
@@ -419,7 +450,7 @@ def _economy(b, income):
     b["gold_eff"] = round(sum(p * w for p, w in effs) / tot) if tot else None
 
 
-def _sticky_beam(kind, beam, model, base_items, free, enemies, w, score_kind, cons):
+def _sticky_beam(kind, beam, model, base_items, free, enemies, w, score_kind, cons, heals=False, phase="mid"):
     """Si la build anterior de este tipo (menos lo que ya compraste) sigue siendo
     casi tan buena como la nueva, se conserva. Así comprar un objeto no cambia el resto."""
     prev = _MEM["orders"].get(kind)
@@ -436,7 +467,7 @@ def _sticky_beam(kind, beam, model, base_items, free, enemies, w, score_kind, co
     if len(rem) != free or not cons(rem):
         return beam
     try:
-        sc = _score(score_kind, model.stats(base_items + rem), enemies, w)
+        sc = _score(score_kind, model.stats(base_items + rem), enemies, w, phase=phase) + role_itemization.score_adjustment(model, base_items + rem, enemies, heals=heals)
     except Exception:
         return beam
     if _MEM.get("locked") or sc >= beam[0][0] - STICKY_SCORE:
@@ -445,17 +476,26 @@ def _sticky_beam(kind, beam, model, base_items, free, enemies, w, score_kind, co
     return beam
 
 
-def _stable_order(kind, model, base_items, combo, score_kind, enemies, w):
+def _stable_order(kind, model, base_items, combo, score_kind, enemies, w, heals=False, phase="mid"):
     """Orden de compra: se respeta el anterior mientras sea la misma build."""
     prev = _MEM["orders"].get(kind) or []
     if prev and set(combo) <= set(prev):
         return [i for i in prev if i in combo]
-    return _order(model, base_items, combo, score_kind, enemies, w)
+    return _order(model, base_items, combo, score_kind, enemies, w, heals=heals, phase=phase)
 
 
-def search(live, model, level, owned, gold_now=0):
-    """Varias builds completas óptimas contra el equipo rival, o None."""
+def search(live, model, level, owned, gold_now=0, phase=None):
+    """Varias builds completas óptimas contra el equipo rival, o None.
+
+    `phase` ajusta la build al momento de la partida:
+      early  -> daño inmediato, objetos baratos, poca defensa
+      mid    -> daño + aguante equilibrado
+      late   -> más aguante, objetos caros de escalado
+    Si no se pasa, se infiere del minuto del juego en `live`.
+    """
     _mem_reset_if_new_game(model, live)
+    if phase is None:
+        phase = _game_phase(live)
     sig = _enemy_sig(live)
     _MEM["locked"] = (_MEM["sig"] is not None and sig == _MEM["sig"])   # el rival no ha cambiado
     _MEM["sig"] = sig
@@ -471,8 +511,9 @@ def search(live, model, level, owned, gold_now=0):
     if free <= 0:
         return {"available": True, "complete": True, "builds": [], "note": "Ya tienes los 6 huecos llenos."}
     owned_set = {int(i) for i in owned}
-    pool = _pool(model, base_items, enemies, w, owned_set)
     heals = _heal_threat(enemies)
+    price_cap = EARLY_MAX_PRICE if phase == "early" else None
+    pool = _pool(model, base_items, enemies, w, owned_set, heals=heals, phase=phase, price_cap=price_cap)
     r_now = _weighted_r(me_now, enemies, w)
     wad, wap = parity.damage_weights(model.champ)
 
@@ -496,12 +537,12 @@ def search(live, model, level, owned, gold_now=0):
     for kind, extra in plans:
         score_kind = "equilibrada" if kind in ("mixta", "ad", "ap") else kind
         cons = (lambda c, e=extra: covers_heal(c) and (e(c) if e else True))
-        beam = _search(score_kind, model, base_items, free, pool, enemies, w, cons)
+        beam = _search(score_kind, model, base_items, free, pool, enemies, w, cons, heals=heals, phase=phase)
         if kind in ("ad", "ap"):             # _search puede devolver un haz que no cumple la regla
             beam = [b for b in beam if cons(b[1])]
         if not beam:
             continue
-        beam = _sticky_beam(kind, beam, model, base_items, free, enemies, w, score_kind, cons)
+        beam = _sticky_beam(kind, beam, model, base_items, free, enemies, w, score_kind, cons, heals=heals, phase=phase)
         s, combo = beam[0]
         key = tuple(sorted(combo))
         if kind in ("ad", "ap") and key in seen:   # misma build que otra: se anota, no se duplica
@@ -516,10 +557,10 @@ def search(live, model, level, owned, gold_now=0):
             else:
                 continue
         seen[key] = None
-        order = _stable_order(kind, model, base_items, combo, score_kind, enemies, w)
+        order = _stable_order(kind, model, base_items, combo, score_kind, enemies, w, heals=heals, phase=phase)
         _MEM["orders"][kind] = list(order)
-        rows, total = _describe(model, base_items, order, score_kind, enemies, w, gold_now, owned)
-        parts, cheap = _cheap_plan(model, base_items, order, score_kind, enemies, w, gold_now, owned)
+        rows, total = _describe(model, base_items, order, score_kind, enemies, w, gold_now, owned, heals=heals, phase=phase)
+        parts, cheap = _cheap_plan(model, base_items, order, score_kind, enemies, w, gold_now, owned, heals=heals, phase=phase)
         for r in rows:
             r["parts"] = parts.get(r["id"], [])
         me_final = model.stats(base_items + combo)
@@ -527,6 +568,7 @@ def search(live, model, level, owned, gold_now=0):
         title, blurb = TITLES[kind]
         bd = {
             "kind": kind, "title": title, "blurb": blurb, "items": rows,
+            "phase": phase,
             "r_final": round(r_final, 2), "r_now": round(r_now, 2),
             "gain_pct": round((r_final / max(r_now, 0.01) - 1) * 100),
             "total_cost": total, "missing": max(0, int(total - gold_now)),
@@ -546,10 +588,28 @@ def search(live, model, level, owned, gold_now=0):
     _MEM["pick"] = next((b["kind"] for b in builds if b.get("rating") == "usa"), None)
     return {
         "available": True, "builds": builds, "r_now": round(r_now, 2), "income": income, "low_gold": low,
-        "heals": heals, "pool_size": len(pool),
+        "phase": phase, "heals": heals, "pool_size": len(pool),
         "catalog": len(parity._catalog_finals()),
         "enemies": [{"champion": e["name"], "projected": len(e["items"])} for e in enemies],
+        "role_itemization": {**role_itemization.role_info(model), "source": "modelo propio de compatibilidad y estado de partida; sin winrate ni popularidad"},
         "note": (f"Probé combinaciones de {len(pool)} objetos entre los {len(parity._catalog_finals())} "
-                 "del parche. Rivales proyectados a 6 objetos. Modelo de estadísticas: no simula pasivas, "
+                 f"del parche (fase {phase}). Rivales proyectados a 6 objetos. Modelo de estadísticas: no simula pasivas, "
                  "habilidades ni runas."),
     }
+
+
+def _game_phase(live):
+    """Infunde la fase de la partida a partir del minuto (live.client).
+
+    early: < 14 min, mid: 14-25 min, late: >= 25 min."""
+    if not live:
+        return "mid"
+    try:
+        minutes = float(live.get("game_time", 0) or 0) / 60.0
+    except (TypeError, ValueError):
+        return "mid"
+    if minutes < 14:
+        return "early"
+    if minutes < 25:
+        return "mid"
+    return "late"

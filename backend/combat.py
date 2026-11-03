@@ -228,3 +228,69 @@ def compare_builds(build_a, build_b, phys_share, magic_share):
             "ganar: una pelea real depende de posicionamiento, cooldowns y equipo."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Primitivos añadidos (compatibles: no cambian ninguna función anterior)
+# ---------------------------------------------------------------------------
+ATTACK_SPEED_CAP = 3.003   # tope vigente; ver nota en parity.ATTACK_SPEED_CAP
+ATTACK_SPEED_FLOOR = 0.2
+
+
+def stack_pct(fractions):
+    """Apila reducciones/penetraciones PORCENTUALES de fuentes distintas.
+
+    Wiki oficial (Armor penetration / Magic penetration): se apilan
+    multiplicativamente, no se suman:  1 - Π(1 - p_i).  Ej.: 35 % y 40 % dan
+    61 %, no 75 %. Cada p_i es una fracción (0.35 = 35 %)."""
+    rest = 1.0
+    for p in fractions or ():
+        rest *= 1.0 - min(max(float(p or 0.0), 0.0), 1.0)
+    return 1.0 - rest
+
+
+def attack_speed_total(base, bonus, cap=ATTACK_SPEED_CAP):
+    """Ataques por segundo = base × (1 + bonus), acotado entre el suelo y el tope."""
+    total = float(base) * (1.0 + float(bonus))
+    return min(max(total, ATTACK_SPEED_FLOOR), float(cap))
+
+
+def crit_multiplier(chance, crit_damage=1.75):
+    """Multiplicador ESPERADO del daño de un ataque básico por críticos.
+
+    E[daño] = (1 - c) × 1 + c × crit_damage, con c acotado a [0, 1]. El daño
+    crítico base es 175 %; el adicional (p. ej. Infinity Edge) se suma a él."""
+    c = min(max(float(chance or 0.0), 0.0), 1.0)
+    return 1.0 + (float(crit_damage) - 1.0) * c
+
+
+def heal_effective(amount, heal_power=0.0, wounds=0.0, shield=False):
+    """Curación o escudo que realmente llega.
+
+    `heal_power` = poder de curaciones y escudos (fracción, suma aditiva). Las
+    heridas graves (`wounds`, fracción: 0.4 = 40 %) reducen la CURACIÓN, no los
+    escudos. Orden: se escala por poder de curación y luego se reduce por heridas."""
+    out = float(amount) * (1.0 + float(heal_power or 0.0))
+    if not shield:
+        out *= 1.0 - min(max(float(wounds or 0.0), 0.0), 1.0)
+    return out
+
+
+def sustain_per_second(damage_dealt_per_s, lifesteal=0.0, omnivamp=0.0, wounds=0.0,
+                       heal_power=0.0):
+    """Curación por segundo obtenida al pegar. El robo de vida solo aplica al daño de
+    ataques básicos y el omnisucción a todo el daño; aquí `damage_dealt_per_s` es el
+    daño ya mitigado al que se aplica cada fuente, indicado por el llamador."""
+    base = float(damage_dealt_per_s) * (float(lifesteal or 0.0) + float(omnivamp or 0.0))
+    return heal_effective(base, heal_power=heal_power, wounds=wounds)
+
+
+def pct_health_damage(pct, target_hp_max, target_hp_current=None, current=False):
+    """Daño basado en un % de la vida máxima o actual del objetivo."""
+    base = float(target_hp_current if (current and target_hp_current is not None) else target_hp_max)
+    return float(pct) * base
+
+
+def time_to_kill(target_ehp, dps):
+    """Segundos para eliminar a un objetivo con `target_ehp` de vida efectiva a `dps`."""
+    return float("inf") if dps <= 0 else float(target_ehp) / float(dps)

@@ -7,7 +7,14 @@ from backend.ddragon import ddragon
 class SelfCheck(unittest.TestCase):
     def setUp(self):
         self.saved = (ddragon.ready, ddragon.items, ddragon.champs_by_name, ddragon.version)
-        self.orig_ids = set(archetypes.HYBRID_IDS)
+        # Otros tests llaman a ddragon.warmup() (hilo en segundo plano) y ese hilo puede
+        # ejecutar selfcheck.run() con el catálogo real y podar HYBRID_IDS ANTES de este
+        # setUp. La lista original es la que selfcheck recuerda en _ORIGINAL (si ya corrió);
+        # si no, es la actual. Se restaura para que el test parta siempre de la lista de fábrica.
+        remembered = selfcheck._ORIGINAL.get(("archetypes", "HYBRID_IDS"))
+        self.orig_ids = set(remembered) if remembered else set(archetypes.HYBRID_IDS)
+        archetypes.HYBRID_IDS.clear(); archetypes.HYBRID_IDS.update(self.orig_ids)
+        self.assertTrue(self.orig_ids, "la lista de fábrica HYBRID_IDS no puede estar vacía")
         selfcheck._ORIGINAL.clear()
 
     def tearDown(self):

@@ -1,0 +1,131 @@
+{
+  "champion_id": "Kindred",
+  "champion_name": "Kindred",
+  "patch": "16.21.1",
+  "skills": {
+    "Q": {
+      "skill_key": "Q",
+      "champion_id": "Kindred",
+      "ratios": {},
+      "base_damage": [
+        40.0,
+        65.0,
+        90.0,
+        115.0,
+        140.0
+      ],
+      "cooldown": [
+        9,
+        9,
+        9,
+        9,
+        9
+      ],
+      "cost": [
+        35,
+        35,
+        35,
+        35,
+        35
+      ],
+      "range": [
+        340,
+        340,
+        340,
+        340,
+        340
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Kindred",
+      "ratios": {},
+      "base_damage": [
+        40.0,
+        45.0,
+        50.0,
+        55.0,
+        60.0
+      ],
+      "cooldown": [
+        18,
+        17,
+        16,
+        15,
+        14
+      ],
+      "cost": [
+        40,
+        40,
+        40,
+        40,
+        40
+      ],
+      "range": [
+        560,
+        560,
+        560,
+        560,
+        560
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "R": {
+      "skill_key": "R",
+      "champion_id": "Kindred",
+      "ratios": {},
+      "base_damage": [
+        225.0,
+        300.0,
+        375.0
+      ],
+      "cooldown": [
+        160,
+        140,
+        120
+      ],
+      "cost": [
+        100,
+        100,
+        100
+      ],
+      "range": [
+        500,
+        500,
+        500
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Kindred",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "physical",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

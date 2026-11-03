@@ -332,8 +332,8 @@ class UGGClient:
         se queda con el que aporta más partidas fiables.
         """
         meta = self._meta_now()
-        if not meta.get("patch"):
-            return None
+        if not meta or not meta.get("patch"):
+            return None, None          # siempre (data, meta): los llamadores desempaquetan 2 valores
         best_data = None
         best_meta = None
         best_score = -1

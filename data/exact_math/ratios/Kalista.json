@@ -1,0 +1,61 @@
+{
+  "champion_id": "Kalista",
+  "champion_name": "Kalista",
+  "patch": "16.21.1",
+  "skills": {
+    "W": {
+      "skill_key": "W",
+      "champion_id": "Kalista",
+      "ratios": {},
+      "base_damage": [
+        80.0,
+        80.0,
+        80.0,
+        80.0,
+        80.0
+      ],
+      "cooldown": [
+        30,
+        30,
+        30,
+        30,
+        30
+      ],
+      "cost": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "range": [
+        5000,
+        5000,
+        5000,
+        5000,
+        5000
+      ],
+      "damage_type": "physical",
+      "applies_on_hit": false,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    },
+    "P": {
+      "skill_key": "P",
+      "champion_id": "Kalista",
+      "ratios": {},
+      "base_damage": [],
+      "cooldown": [],
+      "cost": [],
+      "range": [],
+      "damage_type": "physical",
+      "applies_on_hit": true,
+      "can_crit": false,
+      "source": "auto",
+      "verified": false,
+      "patch": "16.21.1"
+    }
+  }
+}

@@ -34,7 +34,7 @@ CHECK_EVERY = 6 * 3600.0
 MAX_ZIP = 50 * 1024 * 1024
 KEEP_BACKUPS = 3
 # Lo que se actualiza. Todo lo demás (sobre todo cache/) queda intacto.
-CODE_DIRS = ("backend", "ui", "tests")
+CODE_DIRS = ("backend", "ui", "tests", "docs", "herramientas")
 CODE_FILES_EXT = (".py", ".bat", ".txt", ".md")
 
 _lock = threading.Lock()
