@@ -4,7 +4,10 @@ Reenvía el puerto de la red local (0.0.0.0:PUERTO_PUENTE) al servidor
 de la app (127.0.0.1:PUERTO_APP), sin tocar el código de la app.
 Ejecútalo en el PC mientras app.py está abierto.
 
-Uso: python ipad_bridge.py [PUERTO_APP=8765] [PUERTO_PUENTE=8766]
+Uso: python ipad_bridge.py [PUERTO_APP=8765] [PUERTO_PUENTE=8766] [BRIDGE_TOKEN=...]
+  BRIDGE_TOKEN: token compartido con el servidor para autenticar el puente.
+                Si no se proporciona, se leerá de la variable de entorno BUNNYLOL_BRIDGE_TOKEN
+                o se solicitará al servidor al inicio.
 
 Robustez (para que un iPad que duerme o pierde el wifi no deje el puente colgado):
   - el bucle accept() sobrevive a errores y reabre el puerto si se rompe;
@@ -13,12 +16,15 @@ Robustez (para que un iPad que duerme o pierde el wifi no deje el puente colgado
   - registro en cache/ipad_bridge.log (rotativo) con los fallos y un resumen periódico.
 Este archivo es independiente: no importa nada del proyecto (también se ejecuta desde herramientas/).
 """
+import json
 import logging
 import os
 import socket
 import sys
 import threading
 import time
+import urllib.request
+import urllib.error
 from logging.handlers import RotatingFileHandler
 
 IDLE_TIMEOUT = 90.0        # s sin datos en NINGUNA dirección: se cierra (entre IDLE y 2*IDLE; el servidor de la app corta a los 30 s)
@@ -29,6 +35,30 @@ MAX_CONNECTIONS = 200
 RELAY_SOURCE = "127.0.0.2"  # origen con el que el puente habla con la app (ver _connect_app)
 CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
 SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
+TOKEN_FETCH_TIMEOUT = 5.0  # s para obtener el token del servidor al inicio
+
+
+def _log_path():
+    root = os.path.dirname(os.path.abspath(__file__))
+    if os.path.basename(root).lower() == "herramientas":
+        root = os.path.dirname(root)
+    return os.environ.get("BUNNYLOL_BRIDGE_LOG") or os.path.join(root, "cache", "ipad_bridge.log")
+
+
+def make_logger(path=None):
+    lg = logging.getLogger("bunnylol.bridge.%s" % (path or "default"))
+    lg.setLevel(logging.INFO)
+    lg.propagate = False
+    if not lg.handlers:
+        try:
+            p = path or _log_path()
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            h = RotatingFileHandler(p, maxBytes=512 * 1024, backupCount=2, encoding="utf-8", delay=True)
+            h.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+            lg.addHandler(h)
+        except Exception:
+            lg.addHandler(logging.NullHandler())
+    return lg
 
 
 def _log_path():
@@ -65,7 +95,7 @@ def ip_local():
         s.close()
 
 
-def tune(sock, idle=IDLE_TIMEOUT):
+def tune(sock, idle=90.0):
     """Keepalive TCP + sin Nagle + límite de inactividad. Cada ajuste es opcional según el sistema."""
     for fn in (
         lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
@@ -85,7 +115,7 @@ def tune(sock, idle=IDLE_TIMEOUT):
         pass
 
 
-def close_gracefully(sock, wait=CLOSE_DRAIN, limit=65536):
+def close_gracefully(sock, wait=0.25, limit=65536):
     """Cierra hacia el cliente sin RST: envía FIN y descarta lo que el cliente ya había enviado.
 
     Cerrar un socket que aún tiene datos sin leer (la petición del iPad) hace que el sistema responda con RST;
@@ -118,11 +148,12 @@ def close_gracefully(sock, wait=CLOSE_DRAIN, limit=65536):
 
 
 class Bridge:
-    def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
-                 max_conn=MAX_CONNECTIONS, logger=None, connect_timeout=CONNECT_TIMEOUT):
+    def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=90.0,
+                 max_conn=200, logger=None, connect_timeout=1.5, bridge_token=None):
         self.port_app, self.port_bridge, self.host = port_app, port_bridge, host
         self.idle, self.max_conn, self.connect_timeout = idle, max_conn, connect_timeout
-        self.log = logger or make_logger()
+        self.bridge_token = bridge_token or self._get_bridge_token(port_app)
+        self.log = make_logger()
         self.stats = {"accepted": 0, "app_unreachable": 0, "rejected": 0, "idle_closed": 0, "accept_errors": 0,
                       "rebinds": 0, "active": 0}
         self._lock = threading.Lock()
@@ -132,6 +163,21 @@ class Bridge:
         self._last_warn = {}
         self._app_down_since = None
         self._src_ok = None                 # None = sin probar, True = 127.0.0.2 funciona, False = no disponible
+
+    def _get_bridge_token(self, port_app):
+        """Obtiene el token del puente desde el servidor o variable de entorno."""
+        token = os.environ.get("BUNNYLOL_BRIDGE_TOKEN")
+        if token:
+            return token
+        try:
+            url = f"http://127.0.0.1:{port_app}/api/bridge/token"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("token", "")
+        except Exception:
+            pass
+        return ""
 
     # ---- utilidades
     def _bump(self, k, n=1):
@@ -155,6 +201,18 @@ class Bridge:
         srv.settimeout(1.0)               # para poder parar y vigilar el estado sin quedarse en accept() eternamente
         return srv
 
+    def _dial(self, source, timeout):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if source:
+                s.bind((source, 0))
+            s.settimeout(timeout)
+            s.connect(("127.0.0.1", self.port_app))
+            return s
+        except BaseException:
+            s.close()
+            raise
+
     def _connect_app(self):
         """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout EN TOTAL.
 
@@ -163,6 +221,7 @@ class Bridge:
         Mientras no se haya comprobado que 127.0.0.2 funciona, el presupuesto de tiempo se reparte entre ese intento
         y el de respaldo con 127.0.0.1 (en Windows rechazar un puerto cerrado tarda ~2 s: dos intentos completos
         dejarían al iPad esperando el doble). Una vez comprobado, solo se usa 127.0.0.2 con el tiempo entero."""
+        global RELAY_SOURCE
         if self._src_ok:
             return self._dial(RELAY_SOURCE, self.connect_timeout)
         end = time.time() + self.connect_timeout
@@ -298,7 +357,7 @@ class Bridge:
                         errors = 0
                     except OSError as e2:
                         self._warn("reabrir", "no se pudo reabrir el puerto %d: %r" % (self.port_bridge, e2), every=10.0)
-                continue
+                    continue
             except Exception as e:
                 self._warn("accept", "error inesperado en accept(): %r" % (e,), every=5.0)
                 time.sleep(0.5)
@@ -307,7 +366,7 @@ class Bridge:
             if c is not None:
                 self._bump("accepted")
                 threading.Thread(target=self._handle, args=(c, addr), daemon=True).start()
-            if time.time() - last_summary >= SUMMARY_EVERY:
+            if time.time() - last_summary >= 600.0:
                 last_summary = time.time()
                 self.log.info("[resumen] %s", self.stats)
 
@@ -334,8 +393,9 @@ def main(argv=None):
     argv = sys.argv if argv is None else argv
     port_app = int(argv[1]) if len(argv) > 1 else 8765
     port_bridge = int(argv[2]) if len(argv) > 2 else 8766
+    bridge_token = argv[3] if len(argv) > 3 else None
     try:
-        br = Bridge(port_app, port_bridge).start()
+        br = Bridge(port_app, port_bridge, bridge_token=bridge_token).start()
     except OSError as e:
         print(f"No se pudo abrir el puerto {port_bridge}: {e}. ¿Ya hay otro puente abierto?")
         return 1

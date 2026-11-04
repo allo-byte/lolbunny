@@ -4,11 +4,9 @@ cd /d "%~dp0"
 title bunnylol
 set "PORT=8765"
 
-set "PYW=pythonw"
 set "PY=python"
-where pythonw >nul 2>&1 || set "PYW="
-where python  >nul 2>&1 || set "PY="
-if "%PYW%"=="" if "%PY%"=="" (
+where python >nul 2>&1 || set "PY="
+if "%PY%"=="" (
   echo.
   echo  NO ENCONTRE PYTHON EN ESTE PC.
   echo  Instala Python 3.11 desde python.org y vuelve a abrir esto.
@@ -26,11 +24,7 @@ if "%UP%"=="200" (
 )
 
 echo  Abriendo bunnylol...
-if not "%PYW%"=="" (
-  start "bunnylol" "%PYW%" app.py
-) else (
-  start "bunnylol" "%PY%" app.py
-)
+start "bunnylol" "%PY%" app.py
 
 set "UP="
 for /l %%n in (1,1,30) do (

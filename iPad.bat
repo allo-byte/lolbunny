@@ -3,6 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title bunnylol - Iniciar y ver en el iPad
 set "PORT=8765"
+set "BRIDGE_PORT=8766"
 
 echo ============================================================
 echo     BUNNYLOL
@@ -22,17 +23,40 @@ where pythonw >nul 2>&1
 if errorlevel 1 (
   start "bunnylol" python app.py
 ) else (
-  start "bunnylol" pythonw app.py
+  start "bunnylol" python app.py
 )
 
 if not "%UP%"=="200" (
   for /l %%n in (1,1,40) do (
     for /f "delims=" %%s in ('powershell -NoProfile -Command "try{(Invoke-WebRequest http://127.0.0.1:%PORT%/api/meta -UseBasicParsing -TimeoutSec 2).StatusCode}catch{}"') do set "UP=%%s"
-    if "%%s"=="200" goto ready
+    if "!UP!"=="200" goto ready
     timeout /t 1 >nul
   )
 )
 :ready
+
+if not "%UP%"=="200" (
+  cls
+  echo ============================================================
+  echo    NO PUDE ABRIR EL PROGRAMA
+  echo ============================================================
+  echo.
+  echo  Ultimas lineas del registro de errores:
+  echo.
+  powershell -NoProfile -Command "if (Test-Path 'cache\app.log') { Get-Content 'cache\app.log' -Tail 15 } else { '  (no hay registro)' }"
+  echo.
+  echo  Prueba a ejecutar a mano:  python app.py
+  echo.
+  pause
+  exit /b
+)
+
+REM --- Iniciar puente iPad ---
+echo  Iniciando puente para iPad...
+set "BRIDGE_TOKEN="
+for /f "delims=" %%t in ('powershell -NoProfile -Command "try{(Invoke-WebRequest http://127.0.0.1:%PORT%/api/bridge/token -UseBasicParsing -TimeoutSec 5).Content | ConvertFrom-Json | Select-Object -ExpandProperty token}catch{} 2>$null"') do set "BRIDGE_TOKEN=%%t"
+
+start "ipad-bridge" python herramientas\ipad_bridge.py %PORT% %BRIDGE_PORT% "!BRIDGE_TOKEN!"
 
 if not "%UP%"=="200" (
   cls
