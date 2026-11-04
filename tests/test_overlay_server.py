@@ -53,17 +53,163 @@ class OverlayServer(unittest.TestCase):
         code, out = call(self.port, "/api/ping")
         self.assertEqual((code, out["ok"], out["boot"]), (200, True, connlog.BOOT_ID))
 
-    def test_state_error_is_200_with_error_structure_and_is_logged(self):
+    def test_state_error_degrades_to_valid_200_with_status_and_is_logged(self):
         def boom():
             raise RuntimeError("dictionary changed size during iteration")
+        server._state_last = None
         server.advisor.state = boom
         code, out = call(self.port, "/api/state")
-        self.assertEqual(code, 200)
-        self.assertEqual(out["status"], "error")
-        self.assertIn("dictionary changed", out["error"])
+        self.assertEqual(code, 200)                                  # el overlay no lo toma por desconexión
+        self.assertIn("status", out)
+        self.assertTrue(out["degraded"])
+        self.assertIn("dictionary changed", out["backend_error"])
+        self.assertNotIn("error", out)                               # validState del cliente rechaza `.error`
         self.assertIn("[error_state]", log_text())
-        server.advisor.state = lambda: {"status": "ready"}          # y el servidor sigue vivo
-        self.assertEqual(call(self.port, "/api/state"), (200, {"status": "ready"}))
+        server.advisor.state = lambda: {"status": "ready", "champ": "Ahri"}
+        self.assertEqual(call(self.port, "/api/state"), (200, {"status": "ready", "champ": "Ahri"}))
+        server.advisor.state = boom                                  # y si vuelve a fallar: lo último bueno, marcado
+        code, out = call(self.port, "/api/state")
+        self.assertEqual((code, out["status"], out["champ"], out["degraded"]), (200, "ready", "Ahri", True))
+
+    def test_state_without_status_is_never_served(self):
+        server._state_last = None
+        server.advisor.state = lambda: {"foo": 1}
+        code, out = call(self.port, "/api/state")
+        self.assertEqual(code, 200)
+        self.assertIn("status", out)
+        self.assertTrue(out["degraded"])
+
+    def test_matchup_slow_ai_answers_within_deadline_and_does_not_pile_up(self):
+        import threading
+        calls = []
+        gate = threading.Event()
+
+        def slow(*a, **k):
+            calls.append(1)
+            gate.wait(10)
+            return {"ok": True, "rows": []}
+        orig, old_dl = server.advisor.analyze_matchup, server.MATCHUP_DEADLINE
+        server.advisor.analyze_matchup = slow
+        server.MATCHUP_DEADLINE = 0.5
+        server._mu_flight = None
+        try:
+            t0 = time.time()
+            res = []
+            ts = [threading.Thread(target=lambda: res.append(call(self.port, "/api/matchup", {}))) for _ in range(5)]
+            [t.start() for t in ts]; [t.join(5) for t in ts]
+            self.assertLess(time.time() - t0, 3.0)
+            self.assertEqual({c for c, _ in res}, {504})
+            self.assertTrue(all(o["pending"] and not o["ok"] for _, o in res))
+            self.assertEqual(len(calls), 1)                          # las 5 comparten UN cálculo
+            gate.set()
+            time.sleep(0.2)
+            self.assertEqual(call(self.port, "/api/matchup", {})[0], 200)   # y cuando termina, responde normal
+        finally:
+            gate.set()
+            server.advisor.analyze_matchup, server.MATCHUP_DEADLINE = orig, old_dl
+            server._mu_flight = None
+
+    def test_matchup_internal_error_is_json_500(self):
+        def boom(*a, **k):
+            raise RuntimeError("x")
+        orig = server.advisor.analyze_matchup
+        server.advisor.analyze_matchup = boom
+        server._mu_flight = None
+        try:
+            code, out = call(self.port, "/api/matchup", {})
+            self.assertEqual((code, out["ok"]), (500, False))
+        finally:
+            server.advisor.analyze_matchup = orig
+            server._mu_flight = None
+
+    def test_static_path_prefix_traversal_is_forbidden(self):
+        from backend import config
+        sib = os.path.normpath(config.UI_DIR) + "_secret"
+        os.makedirs(sib, exist_ok=True)
+        open(os.path.join(sib, "x.txt"), "w").write("secreto")
+        try:
+            code, _ = call(self.port, "/static/../" + os.path.basename(sib) + "/x.txt")
+            self.assertIn(code, (403, 404))
+            s = socket.create_connection(("127.0.0.1", self.port))
+            s.sendall(("GET /static/../%s/x.txt HTTP/1.1\r\nHost: x\r\n\r\n" % os.path.basename(sib)).encode())
+            data = b""
+            while True:
+                c = s.recv(4096)
+                if not c: break
+                data += c
+            self.assertNotIn(b"secreto", data)
+        finally:
+            os.remove(os.path.join(sib, "x.txt")); os.rmdir(sib)
+
+    def test_remote_cannot_change_exec_settings_but_ipad_can_use_the_rest(self):
+        saved = {}
+        orig = server.config.save_settings
+        server.config.save_settings = lambda u: saved.update(u) or dict(saved)
+        server.Handler._is_remote = lambda self: True
+        try:
+            code, out = call(self.port, "/api/settings", {"update_repo": "evil/repo", "auto_update": True})
+            self.assertEqual(code, 403)
+            self.assertEqual(saved, {})
+            for legit in ({"role": "5"}, {"mode": "aram"}, {"lane_view": True}, {"appearance": {"a": 1}}, {"low_gold": False}):
+                self.assertEqual(call(self.port, "/api/settings", legit)[0], 200, legit)
+            self.assertIn("[ajustes_bloqueados]", log_text())
+        finally:
+            server.config.save_settings = orig
+            del server.Handler._is_remote
+
+    def test_remote_ipad_gets_state_overlay_ping_and_clientlog(self):
+        # El iPad directo (no por el puente) llega como IP remota: lo imprescindible debe funcionar.
+        server.Handler._is_remote = lambda self: True
+        server.advisor.state = lambda: {"status": "ready"}
+        try:
+            self.assertEqual(call(self.port, "/api/state"), (200, {"status": "ready"}))
+            self.assertEqual(call(self.port, "/api/ping")[0], 200)
+            self.assertEqual(call(self.port, "/api/clientlog", {"events": [{"kind": "k"}]})[0], 200)
+            self.assertEqual(call(self.port, "/api/ai/config")[0], 403)          # y la clave sigue protegida
+        finally:
+            del server.Handler._is_remote
+
+    def test_restart_same_port_and_clients_recover(self):
+        s1 = server.start_server(0)
+        port = s1.server_address[1]
+        self.assertEqual(call(port, "/api/ping")[0], 200)
+        s1.shutdown(); s1.server_close()
+        with self.assertRaises(OSError):
+            call(port, "/api/ping", timeout=1)
+        s2 = server.start_server(port)                                  # mismo puerto, tras reiniciar
+        try:
+            self.assertEqual(call(port, "/api/ping")[0], 200)
+        finally:
+            s2.shutdown(); s2.server_close()
+
+    def test_start_server_retries_while_port_is_busy(self):
+        import threading
+        hold = socket.socket(); hold.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        hold.bind(("0.0.0.0", 0)); hold.listen(1)
+        port = hold.getsockname()[1]
+        threading.Timer(0.6, hold.close).start()
+        t0 = time.time()
+        s = server.start_server(port, retries=20, delay=0.2)
+        try:
+            self.assertGreaterEqual(time.time() - t0, 0.4)
+            self.assertEqual(call(port, "/api/ping")[0], 200)
+        finally:
+            s.shutdown(); s.server_close()
+
+    def test_concurrent_settings_and_state_stay_consistent(self):
+        import threading
+        from backend import recommend
+        adv = recommend.advisor
+        errs = []
+
+        def hammer(fn):
+            for _ in range(60):
+                try: fn()
+                except Exception as e: errs.append(repr(e))
+        ts = [threading.Thread(target=hammer, args=(lambda: adv.update(None, None, False),)) for _ in range(3)]
+        ts += [threading.Thread(target=hammer, args=(adv.refresh,)) for _ in range(3)]
+        [t.start() for t in ts]; [t.join(20) for t in ts]
+        self.assertEqual(errs, [])
 
     def test_clientlog_accepts_events_and_sanitizes(self):
         code, out = call(self.port, "/api/clientlog", {"ua": "Safari/iPad", "page": "/overlay", "events": [

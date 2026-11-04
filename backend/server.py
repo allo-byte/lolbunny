@@ -53,6 +53,73 @@ def _health():
         return {"error": str(e)}
 
 
+# Ajustes que cambian lo que el PC EJECUTA (actualizador automático, puerto, atajos): solo desde el propio PC.
+REMOTE_BLOCKED_SETTINGS = frozenset({"update_repo", "update_branch", "auto_update", "port",
+                                     "toggle_combo", "ct_combo", "quit_combo", "clickthrough"})
+MATCHUP_DEADLINE = 25.0       # s que espera una petición de /api/matchup antes de responder «sigue calculando»
+
+_state_lock = threading.Lock()
+_state_last = None            # última respuesta buena de /api/state (para degradar sin perder la pantalla)
+
+
+def _state_skeleton(msg):
+    return {"status": "idle", "phase": None, "mock": False, "ready": False, "degraded": True, "backend_error": msg,
+            "matchups": [], "tips": [], "situations": [], "rune_advice": [], "needs": [], "enemies": [], "allies": [],
+            "items": {}, "stats": {}, "runes": {}, "spells": {}, "skills": {}, "settings": config.load_settings()}
+
+
+def _state_response(ip="?"):
+    """/api/state SIEMPRE devuelve un objeto con `status`. Si el motor falla, se sirve lo último bueno marcado como
+    `degraded` + `backend_error` (el overlay lo muestra), nunca un 500 que el overlay tomaría por desconexión."""
+    global _state_last
+    try:
+        st = advisor.state()
+        if not isinstance(st, dict) or "status" not in st:
+            raise ValueError("el motor devolvió un estado sin 'status'")
+        with _state_lock:
+            _state_last = st
+        return st
+    except Exception as e:
+        connlog.write("error_state", ip=ip, error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
+        msg = f"{type(e).__name__}: {e}"[:200]
+        with _state_lock:
+            last = _state_last
+        out = dict(last) if isinstance(last, dict) else _state_skeleton(msg)
+        out["degraded"] = True
+        out["backend_error"] = msg
+        return out
+
+
+_mu_lock = threading.Lock()
+_mu_flight = None             # {"done": Event, "res": (code, body)} de la petición en curso (una sola a la vez)
+
+
+def _matchup_guarded(deadline=None):
+    """Una sola ejecución de analyze_matchup a la vez: las peticiones simultáneas comparten el resultado (antes cada
+    una lanzaba su cálculo y la IA lenta las apilaba). Cada petición espera como mucho `deadline` s."""
+    global _mu_flight
+    deadline = MATCHUP_DEADLINE if deadline is None else deadline
+    with _mu_lock:
+        fl = _mu_flight
+        if fl is None or fl["done"].is_set():
+            fl = _mu_flight = {"done": threading.Event(), "res": None}
+
+            def work(f=fl):
+                try:
+                    f["res"] = (200, advisor.analyze_matchup())
+                except Exception as e:
+                    f["res"] = (500, {"ok": False, "error": f"Error interno: {e!r}"})
+                finally:
+                    f["done"].set()
+            threading.Thread(target=work, daemon=True, name="matchup").start()
+    if fl["done"].wait(deadline):
+        return fl["res"]
+    connlog.event("matchup_lento", every=10.0, seg=deadline)
+    return 504, {"ok": False, "pending": True,
+                 "error": "El análisis tarda más de lo normal (IA lenta). Sigue en curso: vuelve a pulsar en unos segundos."}
+
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = 30   # una conexión muerta (iPad dormido, wifi cortado) no deja el hilo colgado para siempre
@@ -84,11 +151,15 @@ class Handler(BaseHTTPRequestHandler):
         return host not in ("127.0.0.1", "::1", "localhost")
 
     def _is_bridge(self):
-        """Detecta si la petición viene del puente iPad (que reenvía desde 127.0.0.1).
-        El puente expone el servicio en IP:puerto público; el Host header del iPad
-        será la IP pública del PC + puerto del puente, no 127.0.0.1."""
+        """True si la petición llega por el puente del iPad.
+        Principal: el puente sale desde 127.0.0.2 (ver ipad_bridge._connect_app), no falsificable desde el iPad.
+        Respaldo (puente antiguo, o sistema sin 127.0.0.2: llega como 127.0.0.1): una cabecera Host que no sea
+        de este PC. El Host lo controla el cliente, por eso solo es una red de seguridad adicional."""
+        host = self.client_address[0] if self.client_address else ""
+        if host == "127.0.0.2":
+            return True
         if not self._is_remote():
-            host_hdr = (self.headers.get("Host") or "").split(":")[0]
+            host_hdr = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]") if self.headers.get("Host") else ""
             return host_hdr not in ("127.0.0.1", "localhost", "::1")
         return False
 
@@ -177,7 +248,12 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             rel = path[len("/static/"):]
             full = os.path.normpath(os.path.join(config.UI_DIR, rel))
-            if not full.startswith(os.path.normpath(config.UI_DIR)):
+            base = os.path.normpath(config.UI_DIR)
+            try:
+                inside = os.path.commonpath([base, full]) == base
+            except ValueError:
+                inside = False
+            if not inside:
                 self._send(403, {"error": "forbidden"})
                 return
             self._serve_file(full, "no-cache")
@@ -187,19 +263,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "t": time.time(), "boot": connlog.BOOT_ID})
             return
         if path == "/api/state":
-            try:
-                st = advisor.state()
-                self._send(200, st)
-            except Exception as e:
-                connlog.write("error_state", ip=self._ip(), error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
-                # Devolver estructura compatible con el overlay en lugar de 500 crudo
-                self._send(200, {
-                    "status": "error",
-                    "phase": getattr(advisor, "phase", "idle"),
-                    "error": str(e)[:200],
-                    "mock": False,
-                    "ready": ddragon.ready
-                })
+            self._send(200, _state_response(self._ip()))
             return
         if path == "/api/settings":
             self._send(200, config.load_settings())
@@ -352,39 +416,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/settings":
-            if not self._require_local():
-                self._send(403, {"ok": False, "error": "La configuración solo se puede cambiar desde el PC local."})
-                return
             try:
                 update = self._body()
+                if not isinstance(update, dict):
+                    raise ValueError("se esperaba un objeto JSON")
+                if not self._require_local():          # iPad/red: puede cambiar rol, modo, vista… no lo que ejecuta el PC
+                    bloqueadas = sorted(k for k in update if k in REMOTE_BLOCKED_SETTINGS)
+                    if bloqueadas:
+                        connlog.write("ajustes_bloqueados", ip=self._ip(), claves=",".join(bloqueadas))
+                        self._send(403, {"ok": False, "error": "Esos ajustes solo se cambian desde el PC: " + ", ".join(bloqueadas)})
+                        return
                 saved = config.save_settings(update)
-                advisor.update(advisor.last_live, advisor.last_lcu, advisor.mock)
+                advisor.refresh()
                 self._send(200, saved)
             except Exception as e:
                 self._send(400, {"error": str(e)})
             return
         if path == "/api/matchup":
-            # Timeout para /api/matchup (analyze_matchup): evita bloqueos con IA lenta
-            # Usamos un thread con timeout de 25 s (el overlay hace polling cada 4 s)
-            import queue
-            q = queue.Queue()
-            def worker():
-                try:
-                    result = advisor.analyze_matchup()
-                    q.put(("ok", result))
-                except Exception as e:
-                    q.put(("error", e))
-            t = threading.Thread(target=worker, daemon=True)
-            t.start()
-            t.join(timeout=25.0)
-            if t.is_alive():
-                self._send(504, {"ok": False, "error": "timeout analizando enfrentamiento"})
-                return
-            status, payload = q.get()
-            if status == "ok":
-                self._send(200, payload)
-            else:
-                self._send(500, {"ok": False, "error": f"Error interno: {payload!r}"})
+            code, out = _matchup_guarded()
+            self._send(code, out)
             return
         if path == "/api/analyze":
             try:
@@ -445,11 +495,21 @@ class Handler(BaseHTTPRequestHandler):
 _server = None
 
 
-def start_server(port):
+def start_server(port, retries=10, delay=0.5):
+    """Abre el servidor. Tras un reinicio el puerto puede tardar un instante en liberarse (el proceso anterior aún
+    cierra): se reintenta unos segundos en vez de arrancar sin servidor y dejar al iPad sin conexión."""
     global _server
     ThreadingHTTPServer.daemon_threads = True       # los hilos de cada petición no bloquean el cierre
     ThreadingHTTPServer.request_queue_size = 64     # varias pantallas (PC + iPad) sin rechazar conexiones
-    _server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    for intento in range(max(1, retries)):
+        try:
+            _server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+            break
+        except OSError as e:
+            if intento + 1 >= max(1, retries):
+                raise
+            connlog.event("puerto_ocupado", every=2.0, port=port, error=repr(e), intento=intento + 1)
+            time.sleep(delay)
     thread = threading.Thread(target=_server.serve_forever, daemon=True)
     thread.start()
     return _server

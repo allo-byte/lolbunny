@@ -186,3 +186,4 @@ body.shell .settings-card { max-height: 90vh; }
 @media (max-width: 480px) { .sh-brand div { display: none; } }
 
 body.offline #shellTop::after { content: 'Reconectando…'; position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); padding: 3px 12px; border-radius: 999px; background: #ffab4a; color: #1a1205; font-size: 12px; font-weight: 700; }
+body.backend-err:not(.offline) #shellTop::after { content: 'Motor con error; mostrando lo último'; position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); padding: 3px 12px; border-radius: 999px; background: #ff6b6b; color: #240808; font-size: 12px; font-weight: 700; }

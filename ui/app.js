@@ -2105,11 +2105,16 @@ let pollFails = 0;
 const validState = (j) => !!j && typeof j === "object" && !Array.isArray(j) && !j.error && j.status !== undefined;
 const connLog = BunnyConn.createLogger();
 
+let lastBackendErr = "";
 function onStateOk(j) {
   state = j;
   pollFails = 0;
   lastPollOk = Date.now();
   document.body.classList.remove("offline");
+  if (j.backend_error) {                           // el motor respondió pero falló por dentro: se avisa en vez de callar
+    if (j.backend_error !== lastBackendErr) { lastBackendErr = j.backend_error; connLog.log("backend_error", { error: j.backend_error }); }
+  } else lastBackendErr = "";
+  document.body.classList.toggle("backend-err", !!j.backend_error);
   if (window.Shell) Shell.setConn(true);
   render(state);                                  // si el render falla, el poller lo registra pero no lo cuenta como desconexión
 }

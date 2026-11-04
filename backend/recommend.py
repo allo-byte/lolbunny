@@ -67,6 +67,7 @@ def fmt_time(seconds):
 class Advisor:
     def __init__(self):
         self._lock = threading.Lock()
+        self._update_lock = threading.RLock()   # serializa update(): el poller y los ajustes no se pisan
         self.overview = None
         self.overview_key = None
         self.overview_champ = None
@@ -210,6 +211,16 @@ class Advisor:
         return mode
 
     def update(self, live, lcu, mock=False):
+        with self._update_lock:
+            return self._update(live, lcu, mock)
+
+    def refresh(self):
+        """Reaplica la partida ACTUAL (p. ej. tras cambiar un ajuste). Lee lo último DENTRO del bloqueo: antes se
+        llamaba update(self.last_live, ...) con una copia vieja y pisaba lo que el poller acababa de leer."""
+        with self._update_lock:
+            return self._update(self.last_live, self.last_lcu, self.mock)
+
+    def _update(self, live, lcu, mock=False):
         v = ddragon.version
         if v and self._dd_ver and v != self._dd_ver:
             # Parche nuevo: descarta lo cacheado del parche anterior y vuelve a pedir datos.
