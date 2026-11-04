@@ -134,6 +134,24 @@ class BridgeTests(unittest.TestCase):
         self.assertGreaterEqual(b.stats["app_unreachable"], 1)
         self.assertTrue(wait(lambda: b.stats["active"] == 0))
 
+    def test_slow_windows_refusal_with_two_source_attempts_stays_within_connect_timeout(self):
+        # Windows tarda ~2 s en rechazar: el intento desde 127.0.0.2 y el de respaldo juntos no deben pasar de connect_timeout.
+        b = self.bridge()
+        stop_app(self.app)
+        calls = []
+
+        def dial(source, timeout):
+            calls.append((source, timeout))
+            time.sleep(min(2.05, timeout))
+            raise socket.timeout("rechazo lento simulado")
+        b._dial = dial
+        t0 = time.time()
+        self.assertEqual(get_strict(b.port_bridge), b"")
+        self.assertLess(time.time() - t0, 2.0)
+        self.assertEqual(len(calls), 2)
+        self.assertLessEqual(sum(c[1] for c in calls), b.connect_timeout + 0.25)
+        self.assertIsNone(b._src_ok)                                     # app caída ≠ 127.0.0.2 inservible
+
     def test_connect_timeout_to_local_app_is_short(self):
         # La app corre en este mismo PC: un tope largo solo sirve para dejar al iPad esperando.
         self.assertLessEqual(ib.CONNECT_TIMEOUT, 1.5)

@@ -156,31 +156,36 @@ class Bridge:
         return srv
 
     def _connect_app(self):
-        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout.
+        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout EN TOTAL.
 
         Sale desde 127.0.0.2 (no desde 127.0.0.1): así la app ve al iPad como un cliente REMOTO y le aplica las
         mismas protecciones que a cualquier aparato de la red (no puede cerrar la app ni cambiar claves de IA).
-        Si el sistema no deja usar esa dirección y aún no ha funcionado nunca, se usa la normal (y se avisa)."""
-        if self._src_ok is not False:
+        Mientras no se haya comprobado que 127.0.0.2 funciona, el presupuesto de tiempo se reparte entre ese intento
+        y el de respaldo con 127.0.0.1 (en Windows rechazar un puerto cerrado tarda ~2 s: dos intentos completos
+        dejarían al iPad esperando el doble). Una vez comprobado, solo se usa 127.0.0.2 con el tiempo entero."""
+        if self._src_ok:
+            return self._dial(RELAY_SOURCE, self.connect_timeout)
+        end = time.time() + self.connect_timeout
+        if self._src_ok is None:
             try:
-                s = self._dial(RELAY_SOURCE)
+                s = self._dial(RELAY_SOURCE, self.connect_timeout / 2)
                 self._src_ok = True
                 return s
             except OSError:
-                if self._src_ok:                       # ya funcionó antes: es que la app está caída, no la dirección
-                    raise
-        s = self._dial(None)
+                pass
+        left = max(0.2, end - time.time())
+        s = self._dial(None, left)               # respaldo; si la app está caída, esto también falla y se cierra al iPad
         if self._src_ok is None:
             self._src_ok = False
             self._warn("origen", "no se pudo usar %s como origen: la app verá al iPad como local" % RELAY_SOURCE, every=3600.0)
         return s
 
-    def _dial(self, source):
+    def _dial(self, source, timeout):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             if source:
                 s.bind((source, 0))
-            s.settimeout(self.connect_timeout)
+            s.settimeout(timeout)
             s.connect(("127.0.0.1", self.port_app))
             return s
         except BaseException:

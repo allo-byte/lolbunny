@@ -251,7 +251,7 @@ class OverlayServer(unittest.TestCase):
 
     def test_start_server_retries_while_port_is_busy(self):
         import threading
-        hold = socket.socket(); hold.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        hold = socket.socket()      # sin SO_REUSEADDR: en Windows ese ajuste dejaría enlazar dos sockets al mismo puerto
         hold.bind(("0.0.0.0", 0)); hold.listen(1)
         port = hold.getsockname()[1]
         threading.Timer(0.6, hold.close).start()
