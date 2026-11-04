@@ -83,6 +83,20 @@ class Handler(BaseHTTPRequestHandler):
         host = self.client_address[0] if self.client_address else ""
         return host not in ("127.0.0.1", "::1", "localhost")
 
+    def _is_bridge(self):
+        """Detecta si la petición viene del puente iPad (que reenvía desde 127.0.0.1).
+        El puente expone el servicio en IP:puerto público; el Host header del iPad
+        será la IP pública del PC + puerto del puente, no 127.0.0.1."""
+        if not self._is_remote():
+            host_hdr = (self.headers.get("Host") or "").split(":")[0]
+            return host_hdr not in ("127.0.0.1", "localhost", "::1")
+        return False
+
+    def _require_local(self):
+        """True si la petición es desde el PC local directo (no vía puente).
+        Usado para proteger rutas de admin/config/IA."""
+        return not self._is_remote() and not self._is_bridge()
+
     def _serve_remote_overlay(self):
         path = os.path.join(config.UI_DIR, "overlay.html")
         if not os.path.isfile(path):
@@ -118,10 +132,11 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.path.split("?", 1)[0]
         if not (raw.startswith("/api/ai/") or raw == "/api/matchup/live"):
             return False
-        # Cambiar la clave o gastar tu cuota solo desde este PC, no desde otros aparatos de la red.
-        if self._is_remote() and (raw.startswith("/api/ai/providers") or (
+        # Cambiar la clave o gastar tu cuota solo desde este PC, no desde otros aparatos de la red
+        # ni desde el iPad vía puente (que se ve como 127.0.0.1).
+        if not self._require_local() and (raw.startswith("/api/ai/providers") or (
                 raw in ("/api/ai/config", "/api/ai/test") and (method == "POST" or raw == "/api/ai/config"))):
-            self._send(403, {"ok": False, "error": "La IA solo se configura desde el PC."})
+            self._send(403, {"ok": False, "error": "La IA solo se configura desde el PC local."})
             return True
         body = None
         if method == "POST":
@@ -173,10 +188,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/state":
             try:
-                self._send(200, advisor.state())
+                st = advisor.state()
+                self._send(200, st)
             except Exception as e:
                 connlog.write("error_state", ip=self._ip(), error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
-                self._send(500, {"ok": False, "error": str(e)})
+                # Devolver estructura compatible con el overlay en lugar de 500 crudo
+                self._send(200, {
+                    "status": "error",
+                    "phase": getattr(advisor, "phase", "idle"),
+                    "error": str(e)[:200],
+                    "mock": False,
+                    "ready": ddragon.ready
+                })
             return
         if path == "/api/settings":
             self._send(200, config.load_settings())
@@ -329,6 +352,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/settings":
+            if not self._require_local():
+                self._send(403, {"ok": False, "error": "La configuración solo se puede cambiar desde el PC local."})
+                return
             try:
                 update = self._body()
                 saved = config.save_settings(update)
@@ -338,10 +364,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": str(e)})
             return
         if path == "/api/matchup":
-            try:
-                self._send(200, advisor.analyze_matchup())
-            except Exception as e:
-                self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
+            # Timeout para /api/matchup (analyze_matchup): evita bloqueos con IA lenta
+            # Usamos un thread con timeout de 25 s (el overlay hace polling cada 4 s)
+            import queue
+            q = queue.Queue()
+            def worker():
+                try:
+                    result = advisor.analyze_matchup()
+                    q.put(("ok", result))
+                except Exception as e:
+                    q.put(("error", e))
+            t = threading.Thread(target=worker, daemon=True)
+            t.start()
+            t.join(timeout=25.0)
+            if t.is_alive():
+                self._send(504, {"ok": False, "error": "timeout analizando enfrentamiento"})
+                return
+            status, payload = q.get()
+            if status == "ok":
+                self._send(200, payload)
+            else:
+                self._send(500, {"ok": False, "error": f"Error interno: {payload!r}"})
             return
         if path == "/api/analyze":
             try:
@@ -390,6 +433,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "logged": n, "boot": connlog.BOOT_ID})
             return
         if path == "/api/quit":
+            if not self._require_local():
+                self._send(403, {"ok": False, "error": "Solo el PC local puede cerrar la app."})
+                return
             threading.Thread(target=_quit_now, daemon=True).start()
             self._send(200, {"ok": True})
             return

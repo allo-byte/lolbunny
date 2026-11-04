@@ -53,13 +53,13 @@ class OverlayServer(unittest.TestCase):
         code, out = call(self.port, "/api/ping")
         self.assertEqual((code, out["ok"], out["boot"]), (200, True, connlog.BOOT_ID))
 
-    def test_state_error_is_500_with_ok_false_and_is_logged(self):
+    def test_state_error_is_200_with_error_structure_and_is_logged(self):
         def boom():
             raise RuntimeError("dictionary changed size during iteration")
         server.advisor.state = boom
         code, out = call(self.port, "/api/state")
-        self.assertEqual(code, 500)
-        self.assertFalse(out["ok"])
+        self.assertEqual(code, 200)
+        self.assertEqual(out["status"], "error")
         self.assertIn("dictionary changed", out["error"])
         self.assertIn("[error_state]", log_text())
         server.advisor.state = lambda: {"status": "ready"}          # y el servidor sigue vivo
