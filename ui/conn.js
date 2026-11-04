@@ -4,7 +4,8 @@
  * (cabeceras recibidas, cuerpo sin terminar) dejaba el poller bloqueado para siempre, y una respuesta de error
  * se pintaba como si fueran datos: la interfaz seguía visible pero sin información.
  *
- *  - fetchJson: límite DURO de tiempo que incluye la lectura del cuerpo, comprueba r.ok y valida la respuesta.
+ *  - fetchJson: límite DURO de tiempo que incluye la lectura del cuerpo, comprueba r.ok y valida la respuesta
+ *    (acceptHttpError:true deja pasar el JSON de una respuesta de error HTTP, para mostrar el mensaje del motor).
  *  - createPoller: un único bucle (setTimeout encadenado, nunca peticiones solapadas), backoff tras fallos,
  *    reanudación inmediata al volver a primer plano / recuperar red / detectar un salto de reloj,
  *    y un vigilante que rearma el bucle si una petición queda colgada.
@@ -33,7 +34,10 @@
     var init = Object.assign({ cache: "no-store" }, o.init || {});
     if (ctl) init.signal = ctl.signal;
     var work = doFetch(url, init).then(function (r) {
-      if (!r.ok) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
+      if (!r.ok && !o.acceptHttpError) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
+      if (!r.ok) {                                  // acceptHttpError: el motor explica el fallo en un JSON ({ok:false,error})
+        return r.json().catch(function () { var h = new Error("HTTP " + r.status); h.status = r.status; throw h; });
+      }
       return r.json();
     }).then(function (j) {
       if (o.validate && !o.validate(j)) throw new Error("respuesta inválida " + url);

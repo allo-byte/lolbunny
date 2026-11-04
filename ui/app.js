@@ -58,13 +58,15 @@ function pv(fn) {
 
 async function postSettings(patch) {
   try {
-    const r = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
+    // Límite duro de tiempo (una petición colgada ya no deja el ajuste a medias) y una respuesta de error
+    // nunca se guarda como si fueran los ajustes.
+    const s = await BunnyConn.fetchJson("/api/settings", {
+      timeout: 8000,
+      validate: (j) => !!j && typeof j === "object" && !Array.isArray(j) && !j.error,
+      init: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) },
     });
-    settings = await r.json();
-  } catch (e) {}
+    settings = s;
+  } catch (e) { connLog.log("ajuste_no_guardado", { error: BunnyConn.errMsg(e) }); }
   await poll();
 }
 
@@ -1445,19 +1447,28 @@ function liveMinute(st) {
   return m ? Number(m[1]) + Number(m[2]) / 60 : null;
 }
 
+// El análisis puede tardar, pero nunca debe quedarse en "Analizando…" para siempre (el botón sigue desactivado
+// mientras el estado sea "loading", así que una petición colgada lo bloqueaba hasta recargar la página).
+const MATCHUP_TIMEOUT_MS = 90000;
 async function runMatchup() {
   if (mu.status === "loading") return;
   mu.status = "loading";
   mu.error = "";
   if (state) render(state);
   try {
-    const r = await fetch("/api/matchup", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: "{}" });
-    const j = await r.json();
+    const j = await BunnyConn.fetchJson("/api/matchup", {
+      timeout: MATCHUP_TIMEOUT_MS,
+      acceptHttpError: true,                         // un fallo del motor trae su propio mensaje ({ok:false,error})
+      validate: (x) => !!x && typeof x === "object",
+      init: { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    });
     if (j && j.ok) { mu.data = j; mu.data.at_minute = liveMinute(state); mu.status = "done"; }
     else { mu.status = "error"; mu.error = (j && j.error) || "No se pudo analizar."; }
   } catch (e) {
     mu.status = "error";
-    mu.error = "Sin conexión con el motor local.";
+    mu.error = /^timeout/.test(BunnyConn.errMsg(e))
+      ? "El motor tardó demasiado en responder. Vuelve a intentarlo."
+      : "Sin conexión con el motor local.";
   }
   if (state) render(state);
 }
@@ -2170,11 +2181,14 @@ function renderAccess(a) {
     `Si la IP cambia de red, se actualiza sola cada pocos segundos.</div>`;
 }
 
+let accessBusy = false;
 function refreshAccess() {
-  fetch("/api/meta", { cache: "no-store" })
-    .then((r) => r.json())
+  if (accessBusy) return;                          // con el panel abierto se repite cada 5 s: sin solapar peticiones colgadas
+  accessBusy = true;
+  BunnyConn.fetchJson("/api/meta", { timeout: 5000 })
     .then((m) => { if (m && m.access) renderAccess(m.access); })
-    .catch(() => {});
+    .catch(() => {})
+    .then(() => { accessBusy = false; });
 }
 
 function copyLanAddress() {
@@ -2544,10 +2558,12 @@ document.addEventListener("pywebviewready", async () => {
 });
 
 setTimeout(applyPvMode, 1200);
-fetch("/api/settings")
-  .then((r) => r.json())
+BunnyConn.fetchJson("/api/settings", {
+  timeout: 8000,
+  validate: (j) => !!j && typeof j === "object" && !Array.isArray(j) && !j.error,
+})
   .then((s) => {
-    settings = s;
+    if (!settings) settings = s;                   // si ya llegó uno más reciente (postSettings), este no lo pisa
   })
   .catch(() => {});
 poll();

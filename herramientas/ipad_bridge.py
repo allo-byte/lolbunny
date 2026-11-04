@@ -21,7 +21,7 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 
-IDLE_TIMEOUT = 90.0        # s sin datos en ninguna dirección: se cierra (el servidor de la app corta a los 30 s)
+IDLE_TIMEOUT = 90.0        # s sin datos en NINGUNA dirección: se cierra (entre IDLE y 2*IDLE; el servidor de la app corta a los 30 s)
 CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC (127.0.0.1), así que conecta en milisegundos.
                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
@@ -158,13 +158,26 @@ class Bridge:
         return socket.create_connection(("127.0.0.1", self.port_app), timeout=self.connect_timeout)
 
     # ---- reenvío
-    def _copy(self, src, dst, done):
+    def _copy(self, src, dst, done, act=None):
+        """Copia src -> dst. `act` ([timestamp]) es compartido por los dos sentidos de la conexión:
+        el timeout de un sentido solo cierra si TAMPOCO hubo tráfico en el otro (si no, un stream que solo
+        va en un sentido se cortaba cada `idle` s aunque estuviera activo). Cierra entre idle y 2*idle s
+        después del último dato."""
+        if act is None:
+            act = [time.time()]
         try:
             while True:
-                data = src.recv(65536)
+                try:
+                    data = src.recv(65536)
+                except socket.timeout:
+                    if time.time() - act[0] < self.idle:      # el otro sentido sigue vivo
+                        continue
+                    raise
                 if not data:
                     break
+                act[0] = time.time()
                 dst.sendall(data)
+                act[0] = time.time()
         except socket.timeout:
             self._bump("idle_closed")
         except OSError:
@@ -206,9 +219,10 @@ class Bridge:
             tune(client, self.idle)
             tune(app, self.idle)
             done = threading.Event()
-            t = threading.Thread(target=self._copy, args=(app, client, done), daemon=True)
+            act = [time.time()]                    # último dato en cualquiera de los dos sentidos
+            t = threading.Thread(target=self._copy, args=(app, client, done, act), daemon=True)
             t.start()
-            self._copy(client, app, done)          # esta conexión usa el hilo actual; la otra dirección, t
+            self._copy(client, app, done, act)     # esta conexión usa el hilo actual; la otra dirección, t
             t.join(timeout=self.idle + 5)
         except Exception as e:
             self._warn("conexion", "error inesperado con %s: %r" % (addr[0], e))
