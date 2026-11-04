@@ -232,6 +232,32 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(sum(b"ready" in o for o in outs), 25)
         self.assertTrue(wait(lambda: b.stats["active"] == 0))
 
+    def test_bridge_presents_ipad_to_the_app_as_remote_127_0_0_2(self):
+        seen = []
+        orig = App.do_GET
+        App.do_GET = lambda self: (seen.append(self.client_address[0]), orig(self))[1]
+        try:
+            b = self.bridge()
+            self.assertIn(b"ready", get(b.port_bridge))
+        finally:
+            App.do_GET = orig
+        self.assertEqual(seen, ["127.0.0.2"])
+
+    def test_bridge_falls_back_to_plain_loopback_if_source_unavailable(self):
+        seen = []
+        orig = App.do_GET
+        App.do_GET = lambda self: (seen.append(self.client_address[0]), orig(self))[1]
+        old = ib.RELAY_SOURCE
+        ib.RELAY_SOURCE = "203.0.113.9"                       # dirección que este equipo no tiene
+        try:
+            b = self.bridge()
+            self.assertIn(b"ready", get(b.port_bridge))       # el iPad sigue funcionando
+            self.assertIn(b"ready", get(b.port_bridge))
+        finally:
+            App.do_GET = orig
+            ib.RELAY_SOURCE = old
+        self.assertEqual(seen, ["127.0.0.1", "127.0.0.1"])
+
     def test_tune_never_raises_on_closed_socket(self):
         s = socket.socket(); s.close()
         ib.tune(s)

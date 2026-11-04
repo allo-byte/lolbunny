@@ -26,6 +26,7 @@ CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC 
                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
 MAX_CONNECTIONS = 200
+RELAY_SOURCE = "127.0.0.2"  # origen con el que el puente habla con la app (ver _connect_app)
 CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
 SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
 
@@ -130,6 +131,7 @@ class Bridge:
         self._thread = None
         self._last_warn = {}
         self._app_down_since = None
+        self._src_ok = None                 # None = sin probar, True = 127.0.0.2 funciona, False = no disponible
 
     # ---- utilidades
     def _bump(self, k, n=1):
@@ -154,8 +156,36 @@ class Bridge:
         return srv
 
     def _connect_app(self):
-        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout."""
-        return socket.create_connection(("127.0.0.1", self.port_app), timeout=self.connect_timeout)
+        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout.
+
+        Sale desde 127.0.0.2 (no desde 127.0.0.1): así la app ve al iPad como un cliente REMOTO y le aplica las
+        mismas protecciones que a cualquier aparato de la red (no puede cerrar la app ni cambiar claves de IA).
+        Si el sistema no deja usar esa dirección y aún no ha funcionado nunca, se usa la normal (y se avisa)."""
+        if self._src_ok is not False:
+            try:
+                s = self._dial(RELAY_SOURCE)
+                self._src_ok = True
+                return s
+            except OSError:
+                if self._src_ok:                       # ya funcionó antes: es que la app está caída, no la dirección
+                    raise
+        s = self._dial(None)
+        if self._src_ok is None:
+            self._src_ok = False
+            self._warn("origen", "no se pudo usar %s como origen: la app verá al iPad como local" % RELAY_SOURCE, every=3600.0)
+        return s
+
+    def _dial(self, source):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if source:
+                s.bind((source, 0))
+            s.settimeout(self.connect_timeout)
+            s.connect(("127.0.0.1", self.port_app))
+            return s
+        except BaseException:
+            s.close()
+            raise
 
     # ---- reenvío
     def _copy(self, src, dst, done, act=None):

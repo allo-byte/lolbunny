@@ -5,6 +5,8 @@ LOG = tempfile.mktemp(suffix="_conn.log")
 os.environ["BUNNYLOL_CONN_LOG"] = LOG
 from backend import connlog, server
 
+REAL_IS_REMOTE = server.Handler._is_remote
+
 
 def call(port, path, body=None, timeout=5):
     data = None if body is None else json.dumps(body).encode()
@@ -155,7 +157,7 @@ class OverlayServer(unittest.TestCase):
             self.assertIn("[ajustes_bloqueados]", log_text())
         finally:
             server.config.save_settings = orig
-            del server.Handler._is_remote
+            server.Handler._is_remote = REAL_IS_REMOTE
 
     def test_remote_ipad_gets_state_overlay_ping_and_clientlog(self):
         # El iPad directo (no por el puente) llega como IP remota: lo imprescindible debe funcionar.
@@ -167,7 +169,36 @@ class OverlayServer(unittest.TestCase):
             self.assertEqual(call(self.port, "/api/clientlog", {"events": [{"kind": "k"}]})[0], 200)
             self.assertEqual(call(self.port, "/api/ai/config")[0], 403)          # y la clave sigue protegida
         finally:
-            del server.Handler._is_remote
+            server.Handler._is_remote = REAL_IS_REMOTE
+
+    def test_quit_is_blocked_for_remote_and_foreign_origin_and_allowed_locally(self):
+        quits = []
+        orig = server._quit_now
+        server._quit_now = lambda: quits.append(1)
+        try:
+            server.Handler._is_remote = lambda self: True
+            self.assertEqual(call(self.port, "/api/quit", {})[0], 403)
+            server.Handler._is_remote = REAL_IS_REMOTE
+            req = urllib.request.Request("http://127.0.0.1:%d/api/quit" % self.port, data=b"{}", method="POST",
+                                         headers={"Origin": "http://evil.example"})
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 403)
+            time.sleep(0.2)
+            self.assertEqual(quits, [])
+            self.assertEqual(call(self.port, "/api/quit", {})[0], 200)          # desde el PC (sin Origin, como la UI)
+            time.sleep(0.3)
+            self.assertEqual(quits, [1])
+        finally:
+            server._quit_now = orig
+            server.Handler._is_remote = REAL_IS_REMOTE
+
+    def test_bridge_source_127_0_0_2_counts_as_remote(self):
+        class H(server.Handler):
+            def __init__(self, a): self.client_address = (a, 1)
+        self.assertTrue(H("127.0.0.2")._is_remote())
+        self.assertFalse(H("127.0.0.1")._is_remote())
+        self.assertFalse(H("::1")._is_remote())
 
     def test_restart_same_port_and_clients_recover(self):
         s1 = server.start_server(0)

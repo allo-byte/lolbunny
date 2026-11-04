@@ -148,7 +148,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _is_remote(self):
         host = self.client_address[0] if self.client_address else ""
-        return host not in ("127.0.0.1", "::1", "localhost")
+        # Solo 127.0.0.1/::1 es «este PC». El puente del iPad se presenta como 127.0.0.2 (remoto a propósito).
+        return host not in ("127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost")
 
     def _is_bridge(self):
         """True si la petición llega por el puente del iPad.
@@ -483,8 +484,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "logged": n, "boot": connlog.BOOT_ID})
             return
         if path == "/api/quit":
-            if not self._require_local():
-                self._send(403, {"ok": False, "error": "Solo el PC local puede cerrar la app."})
+            if not self._require_local():                     # cerrar la app: solo desde este PC (nunca desde el iPad o la red)
+                connlog.write("quit_bloqueado", ip=self._ip())
+                self._send(403, {"ok": False, "error": "Cerrar la app solo se puede hacer desde el PC."})
+                return
+            origin = self.headers.get("Origin") or ""
+            if origin and urllib.parse.urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
+                self._send(403, {"ok": False, "error": "origen no permitido"})   # una web externa no puede cerrarla
                 return
             threading.Thread(target=_quit_now, daemon=True).start()
             self._send(200, {"ok": True})
