@@ -1,0 +1,272 @@
+From 7d3cbbe7d387b45142216bb6d50c86af8d437ef9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 07:24:43 -0500
+Subject: [PATCH 2/3] Seguridad: /api/quit solo local y el puente presenta al
+ iPad como remoto (127.0.0.2)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- /api/quit: 403 si el cliente es remoto o la petición trae un Origin ajeno.
+- Puente: conecta con la app desde 127.0.0.2, así las protecciones remotas (IA, ajustes, quit) también
+  valen para el iPad; si el sistema no permite ese origen, usa 127.0.0.1 y lo registra.
+- Pruebas corregidas: ya no borran Handler._is_remote al terminar. 267 passed.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ backend/server.py            | 12 +++++++++---
+ herramientas/ipad_bridge.py  | 34 ++++++++++++++++++++++++++++++++--
+ ipad_bridge.py               | 34 ++++++++++++++++++++++++++++++++--
+ tests/test_ipad_bridge.py    | 26 ++++++++++++++++++++++++++
+ tests/test_overlay_server.py | 35 +++++++++++++++++++++++++++++++++--
+ 5 files changed, 132 insertions(+), 9 deletions(-)
+
+diff --git a/backend/server.py b/backend/server.py
+index cf460fd..bceb4a5 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -148,7 +148,8 @@ class Handler(BaseHTTPRequestHandler):
+ 
+     def _is_remote(self):
+         host = self.client_address[0] if self.client_address else ""
+-        return host not in ("127.0.0.1", "::1", "localhost")
++        # Solo 127.0.0.1/::1 es «este PC». El puente del iPad se presenta como 127.0.0.2 (remoto a propósito).
++        return host not in ("127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost")
+ 
+     def _is_bridge(self):
+         """True si la petición llega por el puente del iPad.
+@@ -483,8 +484,13 @@ class Handler(BaseHTTPRequestHandler):
+             self._send(200, {"ok": True, "logged": n, "boot": connlog.BOOT_ID})
+             return
+         if path == "/api/quit":
+-            if not self._require_local():
+-                self._send(403, {"ok": False, "error": "Solo el PC local puede cerrar la app."})
++            if not self._require_local():                     # cerrar la app: solo desde este PC (nunca desde el iPad o la red)
++                connlog.write("quit_bloqueado", ip=self._ip())
++                self._send(403, {"ok": False, "error": "Cerrar la app solo se puede hacer desde el PC."})
++                return
++            origin = self.headers.get("Origin") or ""
++            if origin and urllib.parse.urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
++                self._send(403, {"ok": False, "error": "origen no permitido"})   # una web externa no puede cerrarla
+                 return
+             threading.Thread(target=_quit_now, daemon=True).start()
+             self._send(200, {"ok": True})
+diff --git a/herramientas/ipad_bridge.py b/herramientas/ipad_bridge.py
+index e778edf..e4c08c3 100644
+--- a/herramientas/ipad_bridge.py
++++ b/herramientas/ipad_bridge.py
+@@ -26,6 +26,7 @@ CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC
+                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
+                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
+ MAX_CONNECTIONS = 200
++RELAY_SOURCE = "127.0.0.2"  # origen con el que el puente habla con la app (ver _connect_app)
+ CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
+ SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
+ 
+@@ -130,6 +131,7 @@ class Bridge:
+         self._thread = None
+         self._last_warn = {}
+         self._app_down_since = None
++        self._src_ok = None                 # None = sin probar, True = 127.0.0.2 funciona, False = no disponible
+ 
+     # ---- utilidades
+     def _bump(self, k, n=1):
+@@ -154,8 +156,36 @@ class Bridge:
+         return srv
+ 
+     def _connect_app(self):
+-        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout."""
+-        return socket.create_connection(("127.0.0.1", self.port_app), timeout=self.connect_timeout)
++        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout.
++
++        Sale desde 127.0.0.2 (no desde 127.0.0.1): así la app ve al iPad como un cliente REMOTO y le aplica las
++        mismas protecciones que a cualquier aparato de la red (no puede cerrar la app ni cambiar claves de IA).
++        Si el sistema no deja usar esa dirección y aún no ha funcionado nunca, se usa la normal (y se avisa)."""
++        if self._src_ok is not False:
++            try:
++                s = self._dial(RELAY_SOURCE)
++                self._src_ok = True
++                return s
++            except OSError:
++                if self._src_ok:                       # ya funcionó antes: es que la app está caída, no la dirección
++                    raise
++        s = self._dial(None)
++        if self._src_ok is None:
++            self._src_ok = False
++            self._warn("origen", "no se pudo usar %s como origen: la app verá al iPad como local" % RELAY_SOURCE, every=3600.0)
++        return s
++
++    def _dial(self, source):
++        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++        try:
++            if source:
++                s.bind((source, 0))
++            s.settimeout(self.connect_timeout)
++            s.connect(("127.0.0.1", self.port_app))
++            return s
++        except BaseException:
++            s.close()
++            raise
+ 
+     # ---- reenvío
+     def _copy(self, src, dst, done, act=None):
+diff --git a/ipad_bridge.py b/ipad_bridge.py
+index e778edf..e4c08c3 100644
+--- a/ipad_bridge.py
++++ b/ipad_bridge.py
+@@ -26,6 +26,7 @@ CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC
+                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
+                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
+ MAX_CONNECTIONS = 200
++RELAY_SOURCE = "127.0.0.2"  # origen con el que el puente habla con la app (ver _connect_app)
+ CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
+ SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
+ 
+@@ -130,6 +131,7 @@ class Bridge:
+         self._thread = None
+         self._last_warn = {}
+         self._app_down_since = None
++        self._src_ok = None                 # None = sin probar, True = 127.0.0.2 funciona, False = no disponible
+ 
+     # ---- utilidades
+     def _bump(self, k, n=1):
+@@ -154,8 +156,36 @@ class Bridge:
+         return srv
+ 
+     def _connect_app(self):
+-        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout."""
+-        return socket.create_connection(("127.0.0.1", self.port_app), timeout=self.connect_timeout)
++        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout.
++
++        Sale desde 127.0.0.2 (no desde 127.0.0.1): así la app ve al iPad como un cliente REMOTO y le aplica las
++        mismas protecciones que a cualquier aparato de la red (no puede cerrar la app ni cambiar claves de IA).
++        Si el sistema no deja usar esa dirección y aún no ha funcionado nunca, se usa la normal (y se avisa)."""
++        if self._src_ok is not False:
++            try:
++                s = self._dial(RELAY_SOURCE)
++                self._src_ok = True
++                return s
++            except OSError:
++                if self._src_ok:                       # ya funcionó antes: es que la app está caída, no la dirección
++                    raise
++        s = self._dial(None)
++        if self._src_ok is None:
++            self._src_ok = False
++            self._warn("origen", "no se pudo usar %s como origen: la app verá al iPad como local" % RELAY_SOURCE, every=3600.0)
++        return s
++
++    def _dial(self, source):
++        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++        try:
++            if source:
++                s.bind((source, 0))
++            s.settimeout(self.connect_timeout)
++            s.connect(("127.0.0.1", self.port_app))
++            return s
++        except BaseException:
++            s.close()
++            raise
+ 
+     # ---- reenvío
+     def _copy(self, src, dst, done, act=None):
+diff --git a/tests/test_ipad_bridge.py b/tests/test_ipad_bridge.py
+index 73c6fd4..846c311 100644
+--- a/tests/test_ipad_bridge.py
++++ b/tests/test_ipad_bridge.py
+@@ -232,6 +232,32 @@ class BridgeTests(unittest.TestCase):
+         self.assertEqual(sum(b"ready" in o for o in outs), 25)
+         self.assertTrue(wait(lambda: b.stats["active"] == 0))
+ 
++    def test_bridge_presents_ipad_to_the_app_as_remote_127_0_0_2(self):
++        seen = []
++        orig = App.do_GET
++        App.do_GET = lambda self: (seen.append(self.client_address[0]), orig(self))[1]
++        try:
++            b = self.bridge()
++            self.assertIn(b"ready", get(b.port_bridge))
++        finally:
++            App.do_GET = orig
++        self.assertEqual(seen, ["127.0.0.2"])
++
++    def test_bridge_falls_back_to_plain_loopback_if_source_unavailable(self):
++        seen = []
++        orig = App.do_GET
++        App.do_GET = lambda self: (seen.append(self.client_address[0]), orig(self))[1]
++        old = ib.RELAY_SOURCE
++        ib.RELAY_SOURCE = "203.0.113.9"                       # dirección que este equipo no tiene
++        try:
++            b = self.bridge()
++            self.assertIn(b"ready", get(b.port_bridge))       # el iPad sigue funcionando
++            self.assertIn(b"ready", get(b.port_bridge))
++        finally:
++            App.do_GET = orig
++            ib.RELAY_SOURCE = old
++        self.assertEqual(seen, ["127.0.0.1", "127.0.0.1"])
++
+     def test_tune_never_raises_on_closed_socket(self):
+         s = socket.socket(); s.close()
+         ib.tune(s)
+diff --git a/tests/test_overlay_server.py b/tests/test_overlay_server.py
+index fbb6c2a..7dea813 100644
+--- a/tests/test_overlay_server.py
++++ b/tests/test_overlay_server.py
+@@ -5,6 +5,8 @@ LOG = tempfile.mktemp(suffix="_conn.log")
+ os.environ["BUNNYLOL_CONN_LOG"] = LOG
+ from backend import connlog, server
+ 
++REAL_IS_REMOTE = server.Handler._is_remote
++
+ 
+ def call(port, path, body=None, timeout=5):
+     data = None if body is None else json.dumps(body).encode()
+@@ -155,7 +157,7 @@ class OverlayServer(unittest.TestCase):
+             self.assertIn("[ajustes_bloqueados]", log_text())
+         finally:
+             server.config.save_settings = orig
+-            del server.Handler._is_remote
++            server.Handler._is_remote = REAL_IS_REMOTE
+ 
+     def test_remote_ipad_gets_state_overlay_ping_and_clientlog(self):
+         # El iPad directo (no por el puente) llega como IP remota: lo imprescindible debe funcionar.
+@@ -167,7 +169,36 @@ class OverlayServer(unittest.TestCase):
+             self.assertEqual(call(self.port, "/api/clientlog", {"events": [{"kind": "k"}]})[0], 200)
+             self.assertEqual(call(self.port, "/api/ai/config")[0], 403)          # y la clave sigue protegida
+         finally:
+-            del server.Handler._is_remote
++            server.Handler._is_remote = REAL_IS_REMOTE
++
++    def test_quit_is_blocked_for_remote_and_foreign_origin_and_allowed_locally(self):
++        quits = []
++        orig = server._quit_now
++        server._quit_now = lambda: quits.append(1)
++        try:
++            server.Handler._is_remote = lambda self: True
++            self.assertEqual(call(self.port, "/api/quit", {})[0], 403)
++            server.Handler._is_remote = REAL_IS_REMOTE
++            req = urllib.request.Request("http://127.0.0.1:%d/api/quit" % self.port, data=b"{}", method="POST",
++                                         headers={"Origin": "http://evil.example"})
++            with self.assertRaises(urllib.error.HTTPError) as cm:
++                urllib.request.urlopen(req, timeout=5)
++            self.assertEqual(cm.exception.code, 403)
++            time.sleep(0.2)
++            self.assertEqual(quits, [])
++            self.assertEqual(call(self.port, "/api/quit", {})[0], 200)          # desde el PC (sin Origin, como la UI)
++            time.sleep(0.3)
++            self.assertEqual(quits, [1])
++        finally:
++            server._quit_now = orig
++            server.Handler._is_remote = REAL_IS_REMOTE
++
++    def test_bridge_source_127_0_0_2_counts_as_remote(self):
++        class H(server.Handler):
++            def __init__(self, a): self.client_address = (a, 1)
++        self.assertTrue(H("127.0.0.2")._is_remote())
++        self.assertFalse(H("127.0.0.1")._is_remote())
++        self.assertFalse(H("::1")._is_remote())
+ 
+     def test_restart_same_port_and_clients_recover(self):
+         s1 = server.start_server(0)
+-- 
+2.43.0
+

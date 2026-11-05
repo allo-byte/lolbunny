@@ -1,0 +1,2119 @@
+From e900676d3bc3511eec8252efc70eb9cc285fd79b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 14:45:53 -0500
+Subject: [PATCH 1/3] Overlay iPad 1/3: servidor con /api/ping, /api/clientlog
+ y registro de conexion
+
+- connlog.py: cache/overlay_conn.log rotativo (3 x 512 KB), nunca lanza, con
+  limite por tipo de evento y por IP.
+- server.py: GET /api/ping (ligero, con id de arranque); /api/state registra
+  sus excepciones y responde 500 con ok:false; POST /api/clientlog recibe los
+  eventos del navegador del iPad (acotado a 16 KB, 20 eventos, 30 envios/min
+  por IP); se registran peticiones lentas (>3 s), excepciones de GET/POST y los
+  cortes del cliente a mitad de respuesta, que antes se tragaban en silencio.
+- No toca el motor de recomendaciones, builds ni runas.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ backend/connlog.py           | 126 +++++++++++++++++++++++++++++++++++
+ backend/server.py            |  38 ++++++++++-
+ tests/test_overlay_server.py | 119 +++++++++++++++++++++++++++++++++
+ 3 files changed, 280 insertions(+), 3 deletions(-)
+ create mode 100644 backend/connlog.py
+ create mode 100644 tests/test_overlay_server.py
+
+diff --git a/backend/connlog.py b/backend/connlog.py
+new file mode 100644
+index 0000000..8a8d18f
+--- /dev/null
++++ b/backend/connlog.py
+@@ -0,0 +1,126 @@
++"""Registro de conexión del overlay (PC <-> iPad): cache/overlay_conn.log, rotativo (3 x 512 KB).
++
++Sirve para diagnosticar desconexiones a posteriori: errores de /api/state, respuestas lentas, clientes que cortan
++a mitad de respuesta y los eventos que envía el propio navegador del iPad (/api/clientlog).
++Nunca lanza: un fallo al escribir el log no puede tumbar el servidor.
++"""
++import logging
++import os
++import threading
++import time
++import uuid
++from logging.handlers import RotatingFileHandler
++
++from . import config
++
++BOOT_ID = uuid.uuid4().hex[:8]          # cambia cada vez que arranca el servidor (el cliente detecta reinicios)
++LOG_NAME = "overlay_conn.log"
++MAX_FIELD = 300
++
++_lock = threading.Lock()
++_logger = None
++_last = {}                               # kind -> (último instante, suprimidos): evita inundar el log
++_hits = {}                               # ip -> [instantes] para limitar /api/clientlog
++
++
++def log_path():
++    return os.environ.get("BUNNYLOL_CONN_LOG") or os.path.join(config.CACHE_DIR, LOG_NAME)
++
++
++def _get():
++    global _logger
++    if _logger is not None:
++        return _logger
++    with _lock:
++        if _logger is None:
++            lg = logging.getLogger("bunnylol.conn")
++            lg.setLevel(logging.INFO)
++            lg.propagate = False
++            try:
++                os.makedirs(os.path.dirname(log_path()), exist_ok=True)
++                h = RotatingFileHandler(log_path(), maxBytes=512 * 1024, backupCount=3, encoding="utf-8", delay=True)
++                h.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
++                lg.addHandler(h)
++            except Exception:
++                lg.addHandler(logging.NullHandler())
++            _logger = lg
++    return _logger
++
++
++def reset():
++    """Cierra y olvida el logger (las pruebas cambian la ruta del archivo)."""
++    global _logger
++    with _lock:
++        if _logger is not None:
++            for h in list(_logger.handlers):
++                try:
++                    h.close()
++                except Exception:
++                    pass
++                _logger.removeHandler(h)
++        _logger = None
++        _last.clear()
++        _hits.clear()
++
++
++def _clean(v):
++    s = str(v).replace("\r", " ").replace("\n", " ")
++    return s if len(s) <= MAX_FIELD else s[: MAX_FIELD - 1] + "…"
++
++
++def write(kind, **kv):
++    try:
++        parts = " ".join("%s=%s" % (k, _clean(v)) for k, v in kv.items() if v not in (None, ""))
++        _get().info("[%s] %s" % (kind, parts))
++    except Exception:
++        pass
++
++
++def event(kind, every=10.0, **kv):
++    """Como write(), pero como mucho una vez cada `every` s por tipo (cuenta lo suprimido)."""
++    try:
++        now = time.time()
++        with _lock:
++            t, sup = _last.get(kind, (0.0, 0))
++            if now - t < every:
++                _last[kind] = (t, sup + 1)
++                return
++            _last[kind] = (now, 0)
++        if sup:
++            kv["suprimidos"] = sup
++        write(kind, **kv)
++    except Exception:
++        pass
++
++
++def allow_client(ip, limit=30, window=60.0):
++    """Limita cuántos envíos de log acepta el servidor por IP y minuto."""
++    now = time.time()
++    with _lock:
++        hits = [t for t in _hits.get(ip, []) if now - t < window]
++        if len(hits) >= limit:
++            _hits[ip] = hits
++            return False
++        hits.append(now)
++        _hits[ip] = hits
++        return True
++
++
++def client_events(ip, payload):
++    """Registra los eventos que manda el navegador (overlay del iPad). Devuelve cuántos se aceptaron."""
++    if not isinstance(payload, dict):
++        return 0
++    evs = payload.get("events")
++    if not isinstance(evs, list):
++        return 0
++    ua = _clean(payload.get("ua") or "")
++    page = _clean(payload.get("page") or "")
++    n = 0
++    for e in evs[:20]:
++        if not isinstance(e, dict):
++            continue
++        kind = _clean(e.get("kind") or "evento")[:40]
++        extra = {k: e[k] for k in sorted(e) if k not in ("kind",) and isinstance(e[k], (str, int, float, bool))}
++        write("cliente:" + kind, ip=ip, page=page, ua=ua if n == 0 else "", **extra)
++        n += 1
++    return n
+diff --git a/backend/server.py b/backend/server.py
+index af4556f..7db9755 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -2,11 +2,14 @@ import json
+ import mimetypes
+ import os
+ import threading
++import time
++import traceback
+ import urllib.parse
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ 
+ from . import ai_routes
+ from . import config
++from . import connlog
+ from . import draft
+ from . import journal
+ from .ddragon import MODES, RANK_NAMES, REGION_NAMES, ROLE_NAMES, ddragon
+@@ -70,8 +73,11 @@ class Handler(BaseHTTPRequestHandler):
+         self.end_headers()
+         try:
+             self.wfile.write(body)
+-        except Exception:
+-            pass
++        except Exception as e:                      # el cliente (iPad) cortó a mitad de respuesta
++            connlog.event("respuesta_cortada", ip=self._ip(), path=self.path, error=type(e).__name__, bytes=len(body))
++
++    def _ip(self):
++        return self.client_address[0] if self.client_address else "?"
+ 
+     def _is_remote(self):
+         host = self.client_address[0] if self.client_address else ""
+@@ -130,13 +136,18 @@ class Handler(BaseHTTPRequestHandler):
+         return True
+ 
+     def do_GET(self):
++        t0 = time.time()
+         try:
+             self._do_GET()
+         except Exception as e:                      # una petición rota nunca debe tumbar el servidor
++            connlog.write("error_get", ip=self._ip(), path=self.path, error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
+             try:
+                 self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
+             except Exception:
+                 pass
++        dt = time.time() - t0
++        if dt > 3.0 and self.path.startswith("/api/"):
++            connlog.event("peticion_lenta", every=5.0, ip=self._ip(), path=self.path.split("?")[0], seg=round(dt, 1))
+ 
+     def _do_GET(self):
+         if self._ai("GET"):
+@@ -156,11 +167,16 @@ class Handler(BaseHTTPRequestHandler):
+                 return
+             self._serve_file(full, "no-cache")
+             return
++        if path == "/api/ping":
++            # Ligero y sin tocar el motor: el overlay lo usa para saber si el PC responde.
++            self._send(200, {"ok": True, "t": time.time(), "boot": connlog.BOOT_ID})
++            return
+         if path == "/api/state":
+             try:
+                 self._send(200, advisor.state())
+             except Exception as e:
+-                self._send(500, {"error": str(e)})
++                connlog.write("error_state", ip=self._ip(), error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
++                self._send(500, {"ok": False, "error": str(e)})
+             return
+         if path == "/api/settings":
+             self._send(200, config.load_settings())
+@@ -302,6 +318,7 @@ class Handler(BaseHTTPRequestHandler):
+         try:
+             self._do_POST()
+         except Exception as e:
++            connlog.write("error_post", ip=self._ip(), path=self.path, error=repr(e))
+             try:
+                 self._send(500, {"ok": False, "error": f"Error interno: {e!r}"})
+             except Exception:
+@@ -357,6 +374,21 @@ class Handler(BaseHTTPRequestHandler):
+             except Exception as e:
+                 self._send(400, {"ok": False, "error": str(e)})
+             return
++        if path == "/api/clientlog":
++            # Diagnóstico enviado por el navegador del iPad (desconexiones, reanudaciones). Acotado y limitado por IP.
++            ip = self._ip()
++            if not connlog.allow_client(ip):
++                self._send(429, {"ok": False, "error": "demasiados registros"})
++                return
++            try:
++                if int(self.headers.get("Content-Length", 0) or 0) > 16384:
++                    self._send(413, {"ok": False, "error": "demasiado grande"})
++                    return
++                n = connlog.client_events(ip, self._body())
++            except Exception:
++                n = 0
++            self._send(200, {"ok": True, "logged": n, "boot": connlog.BOOT_ID})
++            return
+         if path == "/api/quit":
+             threading.Thread(target=_quit_now, daemon=True).start()
+             self._send(200, {"ok": True})
+diff --git a/tests/test_overlay_server.py b/tests/test_overlay_server.py
+new file mode 100644
+index 0000000..9121f8f
+--- /dev/null
++++ b/tests/test_overlay_server.py
+@@ -0,0 +1,119 @@
++"""Servidor del overlay: /api/ping, errores de /api/state sin tumbar nada, /api/clientlog y registro de conexión."""
++import json, os, socket, sys, tempfile, time, unittest, urllib.error, urllib.request
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++LOG = tempfile.mktemp(suffix="_conn.log")
++os.environ["BUNNYLOL_CONN_LOG"] = LOG
++from backend import connlog, server
++
++
++def call(port, path, body=None, timeout=5):
++    data = None if body is None else json.dumps(body).encode()
++    req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=data, method="POST" if data is not None else "GET",
++                                 headers={"Content-Type": "application/json"})
++    try:
++        with urllib.request.urlopen(req, timeout=timeout) as r:
++            return r.status, json.loads(r.read().decode())
++    except urllib.error.HTTPError as e:
++        return e.code, json.loads(e.read().decode() or "{}")
++
++
++def log_text():
++    for h in list(connlog._get().handlers):
++        try:
++            h.flush()
++        except Exception:
++            pass
++    try:
++        return open(LOG, encoding="utf-8").read()
++    except OSError:
++        return ""
++
++
++class OverlayServer(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        connlog.reset()
++        cls.srv = server.start_server(0)
++        cls.port = cls.srv.server_address[1]
++        cls.orig_state = server.advisor.state
++
++    @classmethod
++    def tearDownClass(cls):
++        server.advisor.state = cls.orig_state
++        cls.srv.shutdown()
++        cls.srv.server_close()
++        connlog.reset()
++
++    def setUp(self):
++        server.advisor.state = self.orig_state
++        connlog._hits.clear()
++
++    def test_ping_is_light_and_has_boot_id(self):
++        code, out = call(self.port, "/api/ping")
++        self.assertEqual((code, out["ok"], out["boot"]), (200, True, connlog.BOOT_ID))
++
++    def test_state_error_is_500_with_ok_false_and_is_logged(self):
++        def boom():
++            raise RuntimeError("dictionary changed size during iteration")
++        server.advisor.state = boom
++        code, out = call(self.port, "/api/state")
++        self.assertEqual(code, 500)
++        self.assertFalse(out["ok"])
++        self.assertIn("dictionary changed", out["error"])
++        self.assertIn("[error_state]", log_text())
++        server.advisor.state = lambda: {"status": "ready"}          # y el servidor sigue vivo
++        self.assertEqual(call(self.port, "/api/state"), (200, {"status": "ready"}))
++
++    def test_clientlog_accepts_events_and_sanitizes(self):
++        code, out = call(self.port, "/api/clientlog", {"ua": "Safari/iPad", "page": "/overlay", "events": [
++            {"kind": "recuperado", "downMs": 51234, "fails": 7, "error": "timeout 8000ms\nlinea2"},
++            {"kind": "x" * 200, "obj": {"no": "se registra"}}, "basura", None]})
++        self.assertEqual((code, out["ok"], out["logged"]), (200, True, 2))
++        txt = log_text()
++        self.assertIn("[cliente:recuperado]", txt)
++        self.assertIn("downMs=51234", txt)
++        self.assertNotIn("linea2\n", txt)                           # sin saltos de línea inyectados
++        self.assertNotIn("se registra", txt)
++
++    def test_clientlog_garbage_and_limits(self):
++        self.assertEqual(call(self.port, "/api/clientlog", {"events": "no es lista"})[1]["logged"], 0)
++        self.assertEqual(call(self.port, "/api/clientlog", [1, 2])[1]["logged"], 0)
++        big = {"events": [{"kind": "k", "pad": "y" * 20000}]}
++        self.assertEqual(call(self.port, "/api/clientlog", big)[0], 413)
++        codes = [call(self.port, "/api/clientlog", {"events": []})[0] for _ in range(35)]
++        self.assertIn(429, codes)                                   # limitado por IP
++
++    def test_client_cut_mid_response_is_logged_not_fatal(self):
++        server.advisor.state = lambda: {"status": "ready", "pad": "z" * 4_000_000}
++        s = socket.create_connection(("127.0.0.1", self.port))
++        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b"\x01\x00\x00\x00\x00\x00\x00\x00")   # RST al cerrar
++        s.sendall(b"GET /api/state HTTP/1.1\r\nHost: x\r\n\r\n")
++        s.recv(1024)
++        s.close()                                                   # el iPad desaparece a mitad de la descarga
++        time.sleep(0.6)
++        server.advisor.state = lambda: {"status": "ready"}
++        self.assertEqual(call(self.port, "/api/ping")[0], 200)      # el servidor sigue atendiendo
++        self.assertIn("[respuesta_cortada]", log_text())
++
++    def test_event_rate_limit_counts_suppressed(self):
++        connlog.event("ruidoso", every=60.0, a=1)
++        connlog.event("ruidoso", every=60.0, a=2)
++        connlog.event("ruidoso", every=60.0, a=3)
++        self.assertEqual(log_text().count("[ruidoso]"), 1)
++        self.assertEqual(connlog._last["ruidoso"][1], 2)
++
++    def test_unwritable_log_never_raises(self):
++        connlog.reset()
++        old = os.environ["BUNNYLOL_CONN_LOG"]
++        os.environ["BUNNYLOL_CONN_LOG"] = "/proc/no/se/puede/escribir.log"
++        try:
++            connlog.write("x", a=1)
++            connlog.event("y", a=1)
++            self.assertEqual(connlog.client_events("1.2.3.4", {"events": [{"kind": "k"}]}), 1)
++        finally:
++            os.environ["BUNNYLOL_CONN_LOG"] = old
++            connlog.reset()
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.43.0
+
+
+From 58213819b9711491a2b39d387234fd491eff73b2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 14:49:44 -0500
+Subject: [PATCH 2/3] Overlay iPad 2/3: puente resistente a caidas y conexiones
+ muertas
+
+ipad_bridge.py (y su copia en herramientas/, que una prueba exige identica):
+- accept() con tiempo de espera y recuperacion: ante errores reintenta y, tras
+  5 seguidos, reabre el puerto de escucha. Antes un error mataba el puente.
+- keepalive TCP, TCP_NODELAY y limite de inactividad (90 s) por conexion; las
+  conexiones de un iPad dormido se liberan en vez de acumularse.
+- limite de 200 conexiones simultaneas.
+- registro en cache/ipad_bridge.log (rotativo) con app caida/recuperada,
+  rechazos, errores de accept y resumen periodico.
+- Misma linea de comandos y mismos mensajes de arranque; ahora tambien
+  importable (clase Bridge) para poder probarlo.
+
+Pruebas: reenvio, app caida y recuperada sin reiniciar el puente, conexion muda
+cerrada por inactividad, limite de conexiones, accept() roto, 25 clientes en
+paralelo y CLI.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ herramientas/ipad_bridge.py | 269 +++++++++++++++++++++++++++++++-----
+ ipad_bridge.py              | 269 +++++++++++++++++++++++++++++++-----
+ tests/test_ipad_bridge.py   | 188 +++++++++++++++++++++++++
+ 3 files changed, 652 insertions(+), 74 deletions(-)
+ create mode 100644 tests/test_ipad_bridge.py
+
+diff --git a/herramientas/ipad_bridge.py b/herramientas/ipad_bridge.py
+index ca440d2..b6df0e1 100644
+--- a/herramientas/ipad_bridge.py
++++ b/herramientas/ipad_bridge.py
+@@ -3,13 +3,51 @@
+ Reenvía el puerto de la red local (0.0.0.0:PUERTO_PUENTE) al servidor
+ de la app (127.0.0.1:PUERTO_APP), sin tocar el código de la app.
+ Ejecútalo en el PC mientras app.py está abierto.
++
++Uso: python ipad_bridge.py [PUERTO_APP=8765] [PUERTO_PUENTE=8766]
++
++Robustez (para que un iPad que duerme o pierde el wifi no deje el puente colgado):
++  - el bucle accept() sobrevive a errores y reabre el puerto si se rompe;
++  - keepalive TCP y límite de inactividad por conexión (las conexiones muertas se liberan);
++  - límite de conexiones simultáneas;
++  - registro en cache/ipad_bridge.log (rotativo) con los fallos y un resumen periódico.
++Este archivo es independiente: no importa nada del proyecto (también se ejecuta desde herramientas/).
+ """
++import logging
++import os
+ import socket
+ import sys
+ import threading
++import time
++from logging.handlers import RotatingFileHandler
++
++IDLE_TIMEOUT = 90.0        # s sin datos en ninguna dirección: se cierra (el servidor de la app corta a los 30 s)
++CONNECT_TIMEOUT = 5.0
++MAX_CONNECTIONS = 200
++SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
++
+ 
+-PUERTO_APP = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+-PUERTO_PUENTE = int(sys.argv[2]) if len(sys.argv) > 2 else 8766
++def _log_path():
++    root = os.path.dirname(os.path.abspath(__file__))
++    if os.path.basename(root).lower() == "herramientas":
++        root = os.path.dirname(root)
++    return os.environ.get("BUNNYLOL_BRIDGE_LOG") or os.path.join(root, "cache", "ipad_bridge.log")
++
++
++def make_logger(path=None):
++    lg = logging.getLogger("bunnylol.bridge.%s" % (path or "default"))
++    lg.setLevel(logging.INFO)
++    lg.propagate = False
++    if not lg.handlers:
++        try:
++            p = path or _log_path()
++            os.makedirs(os.path.dirname(p), exist_ok=True)
++            h = RotatingFileHandler(p, maxBytes=512 * 1024, backupCount=2, encoding="utf-8", delay=True)
++            h.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
++            lg.addHandler(h)
++        except Exception:
++            lg.addHandler(logging.NullHandler())
++    return lg
+ 
+ 
+ def ip_local():
+@@ -23,57 +61,214 @@ def ip_local():
+         s.close()
+ 
+ 
+-def copiar(origen, destino):
++def tune(sock, idle=IDLE_TIMEOUT):
++    """Keepalive TCP + sin Nagle + límite de inactividad. Cada ajuste es opcional según el sistema."""
++    for fn in (
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
++        lambda: sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30) if hasattr(socket, "TCP_KEEPIDLE") else None,
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10) if hasattr(socket, "TCP_KEEPINTVL") else None,
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3) if hasattr(socket, "TCP_KEEPCNT") else None,
++        lambda: sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 30000, 10000)) if hasattr(socket, "SIO_KEEPALIVE_VALS") else None,   # Windows
++    ):
++        try:
++            fn()
++        except (OSError, ValueError, AttributeError):
++            pass
+     try:
+-        while True:
+-            datos = origen.recv(65536)
+-            if not datos:
+-                break
+-            destino.sendall(datos)
++        sock.settimeout(idle)
+     except OSError:
+         pass
+-    finally:
+-        for s in (origen, destino):
++
++
++class Bridge:
++    def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
++                 max_conn=MAX_CONNECTIONS, logger=None):
++        self.port_app, self.port_bridge, self.host = port_app, port_bridge, host
++        self.idle, self.max_conn = idle, max_conn
++        self.log = logger or make_logger()
++        self.stats = {"accepted": 0, "app_unreachable": 0, "rejected": 0, "idle_closed": 0, "accept_errors": 0,
++                      "rebinds": 0, "active": 0}
++        self._lock = threading.Lock()
++        self._stop = threading.Event()
++        self._srv = None
++        self._thread = None
++        self._last_warn = {}
++        self._app_down_since = None
++
++    # ---- utilidades
++    def _bump(self, k, n=1):
++        with self._lock:
++            self.stats[k] += n
++
++    def _warn(self, kind, msg, every=30.0):
++        now = time.time()
++        if now - self._last_warn.get(kind, 0.0) >= every:
++            self._last_warn[kind] = now
+             try:
+-                s.shutdown(socket.SHUT_RDWR)
+-            except OSError:
++                self.log.warning("[%s] %s", kind, msg)
++            except Exception:
+                 pass
+-            s.close()
+ 
++    def _listen(self):
++        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++        srv.bind((self.host, self.port_bridge))
++        srv.listen(64)
++        srv.settimeout(1.0)               # para poder parar y vigilar el estado sin quedarse en accept() eternamente
++        return srv
+ 
+-def atender(cliente):
+-    try:
+-        app = socket.create_connection(("127.0.0.1", PUERTO_APP), timeout=5)
+-        app.settimeout(None)
+-    except OSError:
+-        cliente.close()
+-        return
+-    threading.Thread(target=copiar, args=(cliente, app), daemon=True).start()
+-    threading.Thread(target=copiar, args=(app, cliente), daemon=True).start()
++    # ---- reenvío
++    def _copy(self, src, dst, done):
++        try:
++            while True:
++                data = src.recv(65536)
++                if not data:
++                    break
++                dst.sendall(data)
++        except socket.timeout:
++            self._bump("idle_closed")
++        except OSError:
++            pass
++        finally:
++            done.set()
++            for s in (src, dst):
++                try:
++                    s.shutdown(socket.SHUT_RDWR)
++                except OSError:
++                    pass
+ 
++    def _handle(self, client, addr):
++        with self._lock:
++            if self.stats["active"] >= self.max_conn:
++                self.stats["rejected"] += 1
++                full = True
++            else:
++                self.stats["active"] += 1
++                full = False
++        if full:
++            self._warn("limite", "demasiadas conexiones (%d): se rechaza %s" % (self.max_conn, addr[0]))
++            client.close()
++            return
++        app = None
++        try:
++            try:
++                app = socket.create_connection(("127.0.0.1", self.port_app), timeout=CONNECT_TIMEOUT)
++            except OSError as e:
++                self._bump("app_unreachable")
++                if self._app_down_since is None:
++                    self._app_down_since = time.time()
++                self._warn("app_caida", "la app no responde en 127.0.0.1:%d (%s); el iPad reintentará" % (self.port_app, type(e).__name__))
++                return
++            if self._app_down_since is not None:
++                self.log.info("[app_recuperada] la app vuelve a responder tras %d s", time.time() - self._app_down_since)
++                self._app_down_since = None
++            tune(client, self.idle)
++            tune(app, self.idle)
++            done = threading.Event()
++            t = threading.Thread(target=self._copy, args=(app, client, done), daemon=True)
++            t.start()
++            self._copy(client, app, done)          # esta conexión usa el hilo actual; la otra dirección, t
++            t.join(timeout=self.idle + 5)
++        except Exception as e:
++            self._warn("conexion", "error inesperado con %s: %r" % (addr[0], e))
++        finally:
++            for s in (client, app):
++                if s is not None:
++                    try:
++                        s.close()
++                    except OSError:
++                        pass
++            self._bump("active", -1)
++
++    # ---- bucle principal
++    def _loop(self):
++        errors = 0
++        last_summary = time.time()
++        while not self._stop.is_set():
++            try:
++                c, addr = self._srv.accept()
++            except socket.timeout:
++                c = None
++            except OSError as e:
++                if self._stop.is_set():
++                    break
++                errors += 1
++                self._bump("accept_errors")
++                self._warn("accept", "accept() falló (%r), intento %d" % (e, errors), every=5.0)
++                time.sleep(min(2.0, 0.2 * errors))
++                if errors >= 5:                      # el socket de escucha está roto: reabrir el puerto
++                    try:
++                        self._srv.close()
++                    except OSError:
++                        pass
++                    try:
++                        self._srv = self._listen()
++                        self._bump("rebinds")
++                        self.log.warning("[reabierto] puerto %d reabierto tras %d errores", self.port_bridge, errors)
++                        errors = 0
++                    except OSError as e2:
++                        self._warn("reabrir", "no se pudo reabrir el puerto %d: %r" % (self.port_bridge, e2), every=10.0)
++                continue
++            except Exception as e:
++                self._warn("accept", "error inesperado en accept(): %r" % (e,), every=5.0)
++                time.sleep(0.5)
++                continue
++            errors = 0
++            if c is not None:
++                self._bump("accepted")
++                threading.Thread(target=self._handle, args=(c, addr), daemon=True).start()
++            if time.time() - last_summary >= SUMMARY_EVERY:
++                last_summary = time.time()
++                self.log.info("[resumen] %s", self.stats)
++
++    def start(self):
++        self._srv = self._listen()
++        self.port_bridge = self._srv.getsockname()[1]      # útil con puerto 0 en las pruebas
++        self._stop.clear()
++        self._thread = threading.Thread(target=self._loop, daemon=True, name="ipad-bridge")
++        self._thread.start()
++        self.log.info("[inicio] puente %s:%d -> 127.0.0.1:%d", self.host, self.port_bridge, self.port_app)
++        return self
+ 
+-def main():
+-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+-    srv.bind(("0.0.0.0", PUERTO_PUENTE))
+-    srv.listen(20)
++    def stop(self):
++        self._stop.set()
++        try:
++            self._srv.close()
++        except Exception:
++            pass
++        if self._thread:
++            self._thread.join(timeout=3)
++
++
++def main(argv=None):
++    argv = sys.argv if argv is None else argv
++    port_app = int(argv[1]) if len(argv) > 1 else 8765
++    port_bridge = int(argv[2]) if len(argv) > 2 else 8766
++    try:
++        br = Bridge(port_app, port_bridge).start()
++    except OSError as e:
++        print(f"No se pudo abrir el puerto {port_bridge}: {e}. ¿Ya hay otro puente abierto?")
++        return 1
+     ip = ip_local()
+     print("=" * 52)
+     print("  Puente iPad activo")
+     print(f"  En el iPad (misma Wi-Fi) abre:")
+-    print(f"    http://{ip}:{PUERTO_PUENTE}/overlay")
+-    print(f"    http://{ip}:{PUERTO_PUENTE}/   (analizador)")
++    print(f"    http://{ip}:{port_bridge}/overlay")
++    print(f"    http://{ip}:{port_bridge}/   (analizador)")
+     print("  Si la IP cambia al reiniciar el router, prueba con el nombre:")
+-    print(f"    http://{socket.gethostname()}.local:{PUERTO_PUENTE}/overlay")
++    print(f"    http://{socket.gethostname()}.local:{port_bridge}/overlay")
++    print(f"  Registro de fallos: {_log_path()}")
+     print("  Ctrl+C para cerrar")
+     print("=" * 52)
+-    while True:
+-        c, _ = srv.accept()
+-        threading.Thread(target=atender, args=(c,), daemon=True).start()
+-
+-
+-if __name__ == "__main__":
+     try:
+-        main()
++        while True:
++            time.sleep(3600)
+     except KeyboardInterrupt:
+         pass
++    br.stop()
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/ipad_bridge.py b/ipad_bridge.py
+index ca440d2..b6df0e1 100644
+--- a/ipad_bridge.py
++++ b/ipad_bridge.py
+@@ -3,13 +3,51 @@
+ Reenvía el puerto de la red local (0.0.0.0:PUERTO_PUENTE) al servidor
+ de la app (127.0.0.1:PUERTO_APP), sin tocar el código de la app.
+ Ejecútalo en el PC mientras app.py está abierto.
++
++Uso: python ipad_bridge.py [PUERTO_APP=8765] [PUERTO_PUENTE=8766]
++
++Robustez (para que un iPad que duerme o pierde el wifi no deje el puente colgado):
++  - el bucle accept() sobrevive a errores y reabre el puerto si se rompe;
++  - keepalive TCP y límite de inactividad por conexión (las conexiones muertas se liberan);
++  - límite de conexiones simultáneas;
++  - registro en cache/ipad_bridge.log (rotativo) con los fallos y un resumen periódico.
++Este archivo es independiente: no importa nada del proyecto (también se ejecuta desde herramientas/).
+ """
++import logging
++import os
+ import socket
+ import sys
+ import threading
++import time
++from logging.handlers import RotatingFileHandler
++
++IDLE_TIMEOUT = 90.0        # s sin datos en ninguna dirección: se cierra (el servidor de la app corta a los 30 s)
++CONNECT_TIMEOUT = 5.0
++MAX_CONNECTIONS = 200
++SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
++
+ 
+-PUERTO_APP = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+-PUERTO_PUENTE = int(sys.argv[2]) if len(sys.argv) > 2 else 8766
++def _log_path():
++    root = os.path.dirname(os.path.abspath(__file__))
++    if os.path.basename(root).lower() == "herramientas":
++        root = os.path.dirname(root)
++    return os.environ.get("BUNNYLOL_BRIDGE_LOG") or os.path.join(root, "cache", "ipad_bridge.log")
++
++
++def make_logger(path=None):
++    lg = logging.getLogger("bunnylol.bridge.%s" % (path or "default"))
++    lg.setLevel(logging.INFO)
++    lg.propagate = False
++    if not lg.handlers:
++        try:
++            p = path or _log_path()
++            os.makedirs(os.path.dirname(p), exist_ok=True)
++            h = RotatingFileHandler(p, maxBytes=512 * 1024, backupCount=2, encoding="utf-8", delay=True)
++            h.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
++            lg.addHandler(h)
++        except Exception:
++            lg.addHandler(logging.NullHandler())
++    return lg
+ 
+ 
+ def ip_local():
+@@ -23,57 +61,214 @@ def ip_local():
+         s.close()
+ 
+ 
+-def copiar(origen, destino):
++def tune(sock, idle=IDLE_TIMEOUT):
++    """Keepalive TCP + sin Nagle + límite de inactividad. Cada ajuste es opcional según el sistema."""
++    for fn in (
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
++        lambda: sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30) if hasattr(socket, "TCP_KEEPIDLE") else None,
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10) if hasattr(socket, "TCP_KEEPINTVL") else None,
++        lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3) if hasattr(socket, "TCP_KEEPCNT") else None,
++        lambda: sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 30000, 10000)) if hasattr(socket, "SIO_KEEPALIVE_VALS") else None,   # Windows
++    ):
++        try:
++            fn()
++        except (OSError, ValueError, AttributeError):
++            pass
+     try:
+-        while True:
+-            datos = origen.recv(65536)
+-            if not datos:
+-                break
+-            destino.sendall(datos)
++        sock.settimeout(idle)
+     except OSError:
+         pass
+-    finally:
+-        for s in (origen, destino):
++
++
++class Bridge:
++    def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
++                 max_conn=MAX_CONNECTIONS, logger=None):
++        self.port_app, self.port_bridge, self.host = port_app, port_bridge, host
++        self.idle, self.max_conn = idle, max_conn
++        self.log = logger or make_logger()
++        self.stats = {"accepted": 0, "app_unreachable": 0, "rejected": 0, "idle_closed": 0, "accept_errors": 0,
++                      "rebinds": 0, "active": 0}
++        self._lock = threading.Lock()
++        self._stop = threading.Event()
++        self._srv = None
++        self._thread = None
++        self._last_warn = {}
++        self._app_down_since = None
++
++    # ---- utilidades
++    def _bump(self, k, n=1):
++        with self._lock:
++            self.stats[k] += n
++
++    def _warn(self, kind, msg, every=30.0):
++        now = time.time()
++        if now - self._last_warn.get(kind, 0.0) >= every:
++            self._last_warn[kind] = now
+             try:
+-                s.shutdown(socket.SHUT_RDWR)
+-            except OSError:
++                self.log.warning("[%s] %s", kind, msg)
++            except Exception:
+                 pass
+-            s.close()
+ 
++    def _listen(self):
++        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++        srv.bind((self.host, self.port_bridge))
++        srv.listen(64)
++        srv.settimeout(1.0)               # para poder parar y vigilar el estado sin quedarse en accept() eternamente
++        return srv
+ 
+-def atender(cliente):
+-    try:
+-        app = socket.create_connection(("127.0.0.1", PUERTO_APP), timeout=5)
+-        app.settimeout(None)
+-    except OSError:
+-        cliente.close()
+-        return
+-    threading.Thread(target=copiar, args=(cliente, app), daemon=True).start()
+-    threading.Thread(target=copiar, args=(app, cliente), daemon=True).start()
++    # ---- reenvío
++    def _copy(self, src, dst, done):
++        try:
++            while True:
++                data = src.recv(65536)
++                if not data:
++                    break
++                dst.sendall(data)
++        except socket.timeout:
++            self._bump("idle_closed")
++        except OSError:
++            pass
++        finally:
++            done.set()
++            for s in (src, dst):
++                try:
++                    s.shutdown(socket.SHUT_RDWR)
++                except OSError:
++                    pass
+ 
++    def _handle(self, client, addr):
++        with self._lock:
++            if self.stats["active"] >= self.max_conn:
++                self.stats["rejected"] += 1
++                full = True
++            else:
++                self.stats["active"] += 1
++                full = False
++        if full:
++            self._warn("limite", "demasiadas conexiones (%d): se rechaza %s" % (self.max_conn, addr[0]))
++            client.close()
++            return
++        app = None
++        try:
++            try:
++                app = socket.create_connection(("127.0.0.1", self.port_app), timeout=CONNECT_TIMEOUT)
++            except OSError as e:
++                self._bump("app_unreachable")
++                if self._app_down_since is None:
++                    self._app_down_since = time.time()
++                self._warn("app_caida", "la app no responde en 127.0.0.1:%d (%s); el iPad reintentará" % (self.port_app, type(e).__name__))
++                return
++            if self._app_down_since is not None:
++                self.log.info("[app_recuperada] la app vuelve a responder tras %d s", time.time() - self._app_down_since)
++                self._app_down_since = None
++            tune(client, self.idle)
++            tune(app, self.idle)
++            done = threading.Event()
++            t = threading.Thread(target=self._copy, args=(app, client, done), daemon=True)
++            t.start()
++            self._copy(client, app, done)          # esta conexión usa el hilo actual; la otra dirección, t
++            t.join(timeout=self.idle + 5)
++        except Exception as e:
++            self._warn("conexion", "error inesperado con %s: %r" % (addr[0], e))
++        finally:
++            for s in (client, app):
++                if s is not None:
++                    try:
++                        s.close()
++                    except OSError:
++                        pass
++            self._bump("active", -1)
++
++    # ---- bucle principal
++    def _loop(self):
++        errors = 0
++        last_summary = time.time()
++        while not self._stop.is_set():
++            try:
++                c, addr = self._srv.accept()
++            except socket.timeout:
++                c = None
++            except OSError as e:
++                if self._stop.is_set():
++                    break
++                errors += 1
++                self._bump("accept_errors")
++                self._warn("accept", "accept() falló (%r), intento %d" % (e, errors), every=5.0)
++                time.sleep(min(2.0, 0.2 * errors))
++                if errors >= 5:                      # el socket de escucha está roto: reabrir el puerto
++                    try:
++                        self._srv.close()
++                    except OSError:
++                        pass
++                    try:
++                        self._srv = self._listen()
++                        self._bump("rebinds")
++                        self.log.warning("[reabierto] puerto %d reabierto tras %d errores", self.port_bridge, errors)
++                        errors = 0
++                    except OSError as e2:
++                        self._warn("reabrir", "no se pudo reabrir el puerto %d: %r" % (self.port_bridge, e2), every=10.0)
++                continue
++            except Exception as e:
++                self._warn("accept", "error inesperado en accept(): %r" % (e,), every=5.0)
++                time.sleep(0.5)
++                continue
++            errors = 0
++            if c is not None:
++                self._bump("accepted")
++                threading.Thread(target=self._handle, args=(c, addr), daemon=True).start()
++            if time.time() - last_summary >= SUMMARY_EVERY:
++                last_summary = time.time()
++                self.log.info("[resumen] %s", self.stats)
++
++    def start(self):
++        self._srv = self._listen()
++        self.port_bridge = self._srv.getsockname()[1]      # útil con puerto 0 en las pruebas
++        self._stop.clear()
++        self._thread = threading.Thread(target=self._loop, daemon=True, name="ipad-bridge")
++        self._thread.start()
++        self.log.info("[inicio] puente %s:%d -> 127.0.0.1:%d", self.host, self.port_bridge, self.port_app)
++        return self
+ 
+-def main():
+-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+-    srv.bind(("0.0.0.0", PUERTO_PUENTE))
+-    srv.listen(20)
++    def stop(self):
++        self._stop.set()
++        try:
++            self._srv.close()
++        except Exception:
++            pass
++        if self._thread:
++            self._thread.join(timeout=3)
++
++
++def main(argv=None):
++    argv = sys.argv if argv is None else argv
++    port_app = int(argv[1]) if len(argv) > 1 else 8765
++    port_bridge = int(argv[2]) if len(argv) > 2 else 8766
++    try:
++        br = Bridge(port_app, port_bridge).start()
++    except OSError as e:
++        print(f"No se pudo abrir el puerto {port_bridge}: {e}. ¿Ya hay otro puente abierto?")
++        return 1
+     ip = ip_local()
+     print("=" * 52)
+     print("  Puente iPad activo")
+     print(f"  En el iPad (misma Wi-Fi) abre:")
+-    print(f"    http://{ip}:{PUERTO_PUENTE}/overlay")
+-    print(f"    http://{ip}:{PUERTO_PUENTE}/   (analizador)")
++    print(f"    http://{ip}:{port_bridge}/overlay")
++    print(f"    http://{ip}:{port_bridge}/   (analizador)")
+     print("  Si la IP cambia al reiniciar el router, prueba con el nombre:")
+-    print(f"    http://{socket.gethostname()}.local:{PUERTO_PUENTE}/overlay")
++    print(f"    http://{socket.gethostname()}.local:{port_bridge}/overlay")
++    print(f"  Registro de fallos: {_log_path()}")
+     print("  Ctrl+C para cerrar")
+     print("=" * 52)
+-    while True:
+-        c, _ = srv.accept()
+-        threading.Thread(target=atender, args=(c,), daemon=True).start()
+-
+-
+-if __name__ == "__main__":
+     try:
+-        main()
++        while True:
++            time.sleep(3600)
+     except KeyboardInterrupt:
+         pass
++    br.stop()
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tests/test_ipad_bridge.py b/tests/test_ipad_bridge.py
+new file mode 100644
+index 0000000..5c2313a
+--- /dev/null
++++ b/tests/test_ipad_bridge.py
+@@ -0,0 +1,188 @@
++"""Puente del iPad: reenvío, app caída y recuperada, conexiones mudas, límite, accept() roto, CLI. Sin red externa."""
++import os, socket, subprocess, sys, tempfile, threading, time, unittest
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++sys.path.insert(0, ROOT)
++os.environ["BUNNYLOL_BRIDGE_LOG"] = tempfile.mktemp(suffix="_bridge.log")
++import ipad_bridge as ib
++
++
++class App(BaseHTTPRequestHandler):
++    protocol_version = "HTTP/1.1"
++    timeout = 5
++
++    def log_message(self, *a):
++        pass
++
++    def do_GET(self):
++        d = b'{"status":"ready"}'
++        self.send_response(200); self.send_header("Content-Length", str(len(d))); self.send_header("Connection", "close")
++        self.end_headers(); self.wfile.write(d)
++
++
++def free_port():
++    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
++
++
++def start_app(port):
++    ThreadingHTTPServer.allow_reuse_address = True
++    srv = ThreadingHTTPServer(("127.0.0.1", port), App)
++    srv.daemon_threads = True
++    threading.Thread(target=srv.serve_forever, daemon=True).start()
++    return srv
++
++
++def stop_app(srv):
++    srv.shutdown(); srv.server_close()
++
++
++def get(port, timeout=3):
++    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
++    try:
++        s.sendall(b"GET /api/state HTTP/1.1\r\nHost: x\r\n\r\n")
++        out = b""
++        while True:
++            try:
++                chunk = s.recv(4096)
++            except ConnectionResetError:           # cierre brusco (RST): para el iPad equivale a conexión cerrada
++                break
++            if not chunk:
++                break
++            out += chunk
++        return out
++    finally:
++        s.close()
++
++
++def wait(cond, t=5.0):
++    end = time.time() + t
++    while time.time() < end:
++        if cond():
++            return True
++        time.sleep(0.02)
++    return False
++
++
++class BridgeTests(unittest.TestCase):
++    def setUp(self):
++        self.app_port = free_port()
++        self.app = start_app(self.app_port)
++        self.bridges = []
++
++    def tearDown(self):
++        for b in self.bridges:
++            b.stop()
++        try:
++            stop_app(self.app)
++        except Exception:
++            pass
++
++    def bridge(self, **kw):
++        b = ib.Bridge(self.app_port, 0, host="127.0.0.1", **kw).start()
++        self.bridges.append(b)
++        return b
++
++    def test_forwards_requests(self):
++        b = self.bridge()
++        self.assertIn(b"ready", get(b.port_bridge))
++        self.assertTrue(wait(lambda: b.stats["active"] == 0))
++
++    def test_app_down_then_back_recovers_without_restarting_bridge(self):
++        b = self.bridge()
++        stop_app(self.app)                                         # la app del PC se reinicia o se cierra
++        t0 = time.time()
++        self.assertEqual(get(b.port_bridge), b"")                  # el iPad recibe un cierre limpio y rápido
++        self.assertLess(time.time() - t0, 2.0)
++        self.assertGreaterEqual(b.stats["app_unreachable"], 1)
++        self.app = start_app(self.app_port)                        # vuelve la app
++        self.assertIn(b"ready", get(b.port_bridge))                # sin tocar el puente
++        self.assertTrue(wait(lambda: b.stats["active"] == 0))
++        for h in b.log.handlers:
++            h.flush()
++        self.assertIn("[app_caida]", open(os.environ["BUNNYLOL_BRIDGE_LOG"], encoding="utf-8").read())
++
++    def test_mute_connection_is_closed_by_idle_timeout(self):
++        b = self.bridge(idle=0.5)
++        mute = socket.create_connection(("127.0.0.1", b.port_bridge))   # iPad dormido: conecta y no dice nada
++        self.assertTrue(wait(lambda: b.stats["active"] == 1))
++        self.assertTrue(wait(lambda: b.stats["active"] == 0, 4.0))      # se libera sola
++        self.assertGreaterEqual(b.stats["idle_closed"], 1)
++        mute.settimeout(1.0)
++        self.assertEqual(mute.recv(1), b"")
++        mute.close()
++        self.assertIn(b"ready", get(b.port_bridge))
++
++    def test_connection_limit_rejects_extra_but_keeps_serving(self):
++        b = self.bridge(max_conn=2, idle=3.0)
++        mutes = [socket.create_connection(("127.0.0.1", b.port_bridge)) for _ in range(2)]
++        self.assertTrue(wait(lambda: b.stats["active"] == 2))
++        self.assertEqual(get(b.port_bridge), b"")                  # la tercera se rechaza al instante
++        self.assertEqual(b.stats["rejected"], 1)
++        for m in mutes:
++            m.close()
++        self.assertTrue(wait(lambda: b.stats["active"] == 0, 5.0))
++        self.assertIn(b"ready", get(b.port_bridge))                # y al liberarse vuelve a atender
++
++    def test_accept_errors_reopen_listener_and_keep_working(self):
++        b = self.bridge()
++        real = b._srv
++
++        class Broken:
++            def __init__(self):
++                self.n = 0
++            def accept(self):
++                self.n += 1
++                raise OSError("simulado: socket de escucha roto")
++            def close(self):
++                real.close()
++            def settimeout(self, t):
++                pass
++        port = b.port_bridge
++        b.port_bridge = port                                       # el puerto se conserva al reabrir
++        b._srv = Broken()
++        self.assertTrue(wait(lambda: b.stats["rebinds"] >= 1, 10.0))
++        self.assertGreaterEqual(b.stats["accept_errors"], 5)
++        self.assertIn(b"ready", get(b.port_bridge))                # tras reabrir, sirve otra vez
++
++    def test_many_parallel_clients(self):
++        b = self.bridge()
++        outs = []
++        ts = [threading.Thread(target=lambda: outs.append(get(b.port_bridge))) for _ in range(25)]
++        [t.start() for t in ts]; [t.join(10) for t in ts]
++        self.assertEqual(sum(b"ready" in o for o in outs), 25)
++        self.assertTrue(wait(lambda: b.stats["active"] == 0))
++
++    def test_tune_never_raises_on_closed_socket(self):
++        s = socket.socket(); s.close()
++        ib.tune(s)
++
++    def test_tools_copy_is_identical(self):
++        a = open(os.path.join(ROOT, "ipad_bridge.py"), "rb").read()
++        c = open(os.path.join(ROOT, "herramientas", "ipad_bridge.py"), "rb").read()
++        self.assertEqual(a, c, "herramientas/ipad_bridge.py debe ser copia exacta de ipad_bridge.py")
++
++    def test_cli_keeps_same_arguments_and_prints_urls(self):
++        bp = free_port()
++        env = dict(os.environ, BUNNYLOL_BRIDGE_LOG=tempfile.mktemp(suffix=".log"), PYTHONUNBUFFERED="1")
++        p = subprocess.Popen([sys.executable, "-I", "-u", os.path.join(ROOT, "ipad_bridge.py"), str(self.app_port), str(bp)],
++                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True)
++        try:
++            self.assertTrue(wait(lambda: _can_connect(bp), 5.0))
++            self.assertIn(b"ready", get(bp))
++        finally:
++            p.terminate()
++            out = p.communicate(timeout=5)[0]
++        self.assertIn("Puente iPad activo", out)
++        self.assertIn("/overlay", out)
++
++
++def _can_connect(port):
++    try:
++        socket.create_connection(("127.0.0.1", port), timeout=0.3).close()
++        return True
++    except OSError:
++        return False
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.43.0
+
+
+From b43a646583d9e9a1b964c5d209e27966bc8c5171 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 15:00:37 -0500
+Subject: [PATCH 3/3] Overlay iPad 3/3: cliente con reconexion automatica
+ (ui/conn.js)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Causa: poll() no comprobaba r.ok (un 500 {"error":...} se pintaba como datos y
+el watchdog lo daba por bueno) y el limite de 8 s se cancelaba al llegar las
+cabeceras, de modo que un cuerpo a medias (Safari suspendido, wifi cortado)
+bloqueaba pollBusy para siempre. El auto-recuperador (location.reload tras
+45 s) dejaba la pagina de error de Safari si la red aun no habia vuelto.
+
+- ui/conn.js: fetchJson con limite duro que incluye leer el cuerpo, r.ok y
+  validacion; createPoller con un unico bucle (setTimeout encadenado), backoff,
+  reanudacion inmediata (visibilitychange, pageshow, online, salto de reloj),
+  vigilante de peticiones colgadas y registro hacia /api/clientlog.
+- app.js: poll/startPoller/visibilitychange/watchdog pasan a usar conn.js; se
+  conserva poll() y el aviso «Reconectando…»; se mantiene lo ultimo en pantalla.
+  La recarga queda como ultimo recurso (2 min sin datos, solo si /api/ping
+  responde, max. 1 cada 5 min). muLiveTick y shell.loadMeta usan el limite duro.
+- overlay.html carga conn.js. No se toca el motor de recomendaciones, builds ni
+  runas.
+
+Pruebas: Node (11, servidores HTTP reales que se cuelgan/caen/devuelven 500),
+Chromium real contra el servidor real (9: 500, JSON de error, corte, red
+caida, peticion colgada, pestaña oculta/visible, registro de la caida) y
+verificadas contra el overlay original (4 fallan alli). Suite: 249 passed.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ README.md                     |  20 +++
+ tests/js/conn.test.js         | 192 +++++++++++++++++++++++++++++
+ tests/test_overlay_browser.py | 179 +++++++++++++++++++++++++++
+ tests/test_overlay_conn_js.py |  15 +++
+ tests/test_overlay_server.py  |   1 +
+ ui/app.js                     | 104 +++++++++-------
+ ui/conn.js                    | 224 ++++++++++++++++++++++++++++++++++
+ ui/overlay.html               |   1 +
+ ui/shell.js                   |  10 +-
+ 9 files changed, 698 insertions(+), 48 deletions(-)
+ create mode 100644 tests/js/conn.test.js
+ create mode 100644 tests/test_overlay_browser.py
+ create mode 100644 tests/test_overlay_conn_js.py
+ create mode 100644 ui/conn.js
+
+diff --git a/README.md b/README.md
+index 914e360..62b15d0 100644
+--- a/README.md
++++ b/README.md
+@@ -113,3 +113,23 @@ Pruebas: `python tests/test_mygame.py`.
+ - **Campeones y enfrentamientos**: rivales ordenados TOP / JUNGLE / MID / ADC / SUPPORT, tu campeón y tu build, y el botón **Analizar enfrentamiento** (`POST /api/matchup` → `backend/matchup.py`): tu build real contra cada rival y contra su composición, con qué objetos cambiar, conservar y comprar, y el porqué. Se recalcula con la partida actual (no hay builds fijas); vuelve a pulsarlo tras comprar.
+ - **Viabilidad** (`backend/viability.py`): % por objeto = beneficio contra tu rival 35 % + contra el equipo 25 % + oro 20 % + fase 10 % + encaje con tu campeón 10 %. «USA ESTA» = la mejor (≥ 50 %); «NO RECOMENDADA» = < 40 % o no mejora nada. No es probabilidad de ganar.
+ - Pruebas: `python tests/test_viability_matchup.py`.
++
++## Overlay en el iPad: reconexión automática y diagnóstico
++El overlay consulta `/api/state` cada segundo (no usa WebSocket ni sesiones). Antes, una petición a medias o una respuesta de
++error dejaban la pantalla visible pero sin datos hasta refrescar Safari. Ahora (`ui/conn.js`):
++- Cada petición tiene un **límite duro de 8 s que incluye leer el cuerpo**; solo se pintan respuestas válidas (`r.ok` y con `status`).
++  Un fallo mantiene lo último en pantalla y muestra «Reconectando…».
++- **Un único bucle** (nunca peticiones solapadas), con espera creciente tras fallos (1 → 2 → 4 → 8 → 10 s).
++- Al **volver a primer plano, recuperar red, restaurar la pestaña o detectar que Safari congeló los temporizadores**, reintenta al instante.
++  Si una petición queda colgada, el vigilante rearma el bucle.
++- Recargar la página es el **último recurso**: solo tras 2 min sin datos y si el PC responde a `/api/ping`, y como mucho una vez cada 5 min.
++- `ipad_bridge.py` ahora sobrevive a errores de `accept()`, libera conexiones muertas (90 s), limita a 200 conexiones y avisa si la app del PC no responde.
++
++**Registros para diagnosticar** (en `cache/`, rotativos):
++| Archivo | Qué contiene |
++|---|---|
++| `overlay_conn.log` | errores de `/api/state`, peticiones lentas (>3 s), cortes del iPad a mitad de respuesta y los eventos que envía el propio iPad (`cliente:fallo`, `cliente:recuperado` con `downMs`, `cliente:reanudado`, `cliente:salto_reloj`, `cliente:colgado`, `cliente:recarga`) |
++| `ipad_bridge.log` | `app_caida` / `app_recuperada`, rechazos por límite, errores de `accept`, resumen cada 10 min |
++
++Pruebas: `python -m pytest -q tests` (servidor, puente, Chromium real si Playwright está instalado, y `tests/js/conn.test.js` si hay Node).
++
+diff --git a/tests/js/conn.test.js b/tests/js/conn.test.js
+new file mode 100644
+index 0000000..4a1598e
+--- /dev/null
++++ b/tests/js/conn.test.js
+@@ -0,0 +1,192 @@
++// Pruebas de ui/conn.js con servidores HTTP reales que se caen, se cuelgan o fallan. Ejecutar: node --test tests/js
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const http = require("node:http");
++const path = require("node:path");
++const C = require(path.join(__dirname, "..", "..", "ui", "conn.js"));
++
++const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
++async function until(cond, ms = 3000, step = 10) {
++  const end = Date.now() + ms;
++  while (Date.now() < end) { if (cond()) return true; await sleep(step); }
++  return cond();
++}
++
++function makeServer() {
++  const s = { mode: "ok", hits: 0, open: 0, maxOpen: 0, n: 0 };
++  s.srv = http.createServer((req, res) => {
++    s.hits++; s.open++; s.maxOpen = Math.max(s.maxOpen, s.open);
++    res.on("close", () => { s.open--; });
++    if (req.url.startsWith("/api/clientlog")) { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => { s.logged = (s.logged || []).concat(JSON.parse(b).events); res.writeHead(200, { "Content-Type": "application/json" }); res.end('{"ok":true}'); }); return; }
++    switch (s.mode) {
++      case "ok": res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ status: "ready", n: ++s.n })); break;
++      case "500": res.writeHead(500, { "Content-Type": "application/json" }); res.end('{"ok":false,"error":"dictionary changed size"}'); break;
++      case "junk": res.writeHead(200, { "Content-Type": "application/json" }); res.end('{"error":"x"}'); break;
++      case "stall": res.writeHead(200, { "Content-Type": "application/json", "Content-Length": "5000" }); res.write('{"status":"ready"'); break;  // cuerpo a medias
++      case "drop": req.socket.destroy(); break;
++    }
++  });
++  return new Promise((r) => s.srv.listen(0, "127.0.0.1", () => { s.port = s.srv.address().port; s.url = (p) => "http://127.0.0.1:" + s.port + p; r(s); }));
++}
++const close = (s) => { s.srv.closeAllConnections(); s.srv.close(); };
++const valid = (j) => !!j && typeof j === "object" && !j.error && j.status !== undefined;
++
++test("fetchJson: ok, HTTP 500, respuesta inválida y conexión caída se rechazan; solo lo válido pasa", async () => {
++  const s = await makeServer();
++  const get = () => C.fetchJson(s.url("/api/state"), { timeout: 400, validate: valid });
++  assert.equal((await get()).status, "ready");
++  s.mode = "500"; await assert.rejects(get(), (e) => e.status === 500);
++  s.mode = "junk"; await assert.rejects(get(), /inválida/);
++  s.mode = "drop"; await assert.rejects(get());
++  close(s);
++  await assert.rejects(get());          // servidor apagado
++});
++
++test("fetchJson: un cuerpo que se queda a medias NO bloquea (límite duro incluye la lectura)", async () => {
++  const s = await makeServer(); s.mode = "stall";
++  const t0 = Date.now();
++  await assert.rejects(C.fetchJson(s.url("/api/state"), { timeout: 300, validate: valid }), /timeout/);
++  assert.ok(Date.now() - t0 < 1500, "debió rendirse a los ~300 ms");
++  assert.ok(await until(() => s.open === 0), "la petición abortada libera la conexión");
++  close(s);
++});
++
++function poller(s, extra = {}) {
++  const ev = { ok: [], fail: [], logs: [], inflight: 0, maxInflight: 0, calls: 0 };
++  const log = (k, f) => ev.logs.push({ kind: k, ...(f || {}) });
++  const p = C.createPoller(Object.assign({
++    interval: 30, hardMs: 600, maxBackoff: 120, beatMs: 20, jumpMs: 400, reloadAfterMs: 60000,
++    fetch: () => { ev.calls++; ev.inflight++; ev.maxInflight = Math.max(ev.maxInflight, ev.inflight);
++      return C.fetchJson(s.url("/api/state"), { timeout: 250, validate: valid }).finally(() => ev.inflight--); },
++    onOk: (d) => ev.ok.push(d), onFail: (e) => ev.fail.push(e.message), log,
++  }, extra));
++  return { p, ev };
++}
++
++test("desconexión y reconexión: cuelgue, 500, corte y vuelta; nunca pinta un error ni solapa peticiones", async () => {
++  const s = await makeServer();
++  const { p, ev } = poller(s);
++  assert.equal(p.start(), true);
++  assert.ok(await until(() => ev.ok.length >= 3), "arranca y recibe datos");
++  for (const mode of ["stall", "500", "drop", "junk"]) {
++    const failsBefore = ev.fail.length;
++    s.mode = mode;
++    assert.ok(await until(() => ev.fail.length >= failsBefore + 2, 4000), "detecta el fallo: " + mode);
++  }
++  const okBefore = ev.ok.length;
++  s.mode = "ok";                                                       // el wifi vuelve
++  assert.ok(await until(() => ev.ok.length > okBefore, 3000), "recupera sola, sin recargar");
++  assert.ok(ev.ok.every(valid), "onOk solo recibió datos válidos (nunca un error)");
++  assert.equal(ev.maxInflight, 1, "nunca hay dos peticiones a la vez");
++  const rec = ev.logs.find((l) => l.kind === "recuperado");
++  assert.ok(rec && rec.downMs > 0 && rec.fails >= 2, "queda registrada la caída: " + JSON.stringify(rec));
++  assert.ok(ev.logs.some((l) => l.kind === "fallo"));
++  p.stop(); close(s);
++});
++
++test("una petición que nunca termina (Safari suspendido) rearma el bucle sin recargar", async () => {
++  const ev = { calls: 0, ok: 0, logs: [] };
++  let hang = true;
++  const p = C.createPoller({
++    interval: 20, hardMs: 150, beatMs: 20, maxBackoff: 60,
++    fetch: () => { ev.calls++; return hang ? new Promise(() => {}) : Promise.resolve({ status: "ready" }); },
++    onOk: () => ev.ok++, log: (k, f) => ev.logs.push({ kind: k, ...f }),
++  });
++  p.start();
++  assert.ok(await until(() => ev.logs.some((l) => l.kind === "colgado"), 2000), "el vigilante detecta el cuelgue");
++  hang = false;
++  assert.ok(await until(() => ev.ok >= 2, 2000), "y se recupera");
++  assert.ok(ev.calls < 12, "sin acumular peticiones: " + ev.calls);
++  p.stop();
++});
++
++test("start() repetido no crea bucles duplicados", async () => {
++  const s = await makeServer();
++  const { p, ev } = poller(s, { interval: 50 });
++  assert.equal(p.start(), true); assert.equal(p.start(), false); assert.equal(p.start(), false);
++  await sleep(400);
++  assert.ok(ev.calls <= 10, "un solo bucle (~8 llamadas), no " + ev.calls);
++  assert.equal(ev.maxInflight, 1);
++  p.stop(); const n = ev.calls; await sleep(150); assert.equal(ev.calls, n, "stop() detiene todo");
++  close(s);
++});
++
++test("salto de reloj (Safari congeló los temporizadores): reintenta al instante aunque esté en espera larga", async () => {
++  const s = await makeServer(); s.mode = "500";
++  const clock = { t: 1_000_000 };
++  const { p, ev } = poller(s, { now: () => clock.t, interval: 2000, maxBackoff: 5000 });   // sin salto, el siguiente intento tardaría ≥4 s
++  p.start();
++  assert.ok(await until(() => ev.fail.length >= 1));
++  const calls = ev.calls;
++  await sleep(100);
++  assert.equal(ev.calls, calls, "en backoff no hay peticiones");
++  s.mode = "ok"; clock.t += 120000;                                    // la pantalla estuvo bloqueada 2 min
++  assert.ok(await until(() => ev.ok.length >= 1, 1500), "recupera de inmediato tras el salto");
++  assert.ok(ev.logs.some((l) => l.kind === "salto_reloj" && l.gapMs >= 120000));
++  p.stop(); close(s);
++});
++
++test("resume() (visible / pageshow / online) reintenta ya, y oculto no consulta", async () => {
++  const s = await makeServer(); s.mode = "500";
++  let visible = true;
++  const { p, ev } = poller(s, { interval: 2000, maxBackoff: 5000, isVisible: () => visible });
++  p.start();
++  assert.ok(await until(() => ev.fail.length >= 1));
++  s.mode = "ok"; p.resume("online");
++  assert.ok(await until(() => ev.ok.length >= 1, 1000), "resume() no espera al temporizador");
++  visible = false; p.hidden();
++  await sleep(150); const c0 = ev.calls; await sleep(200);
++  assert.equal(ev.calls, c0, "con la pestaña oculta no se consulta");
++  visible = true; p.resume("visible");
++  assert.ok(await until(() => ev.calls > c0, 1000));
++  assert.ok(ev.logs.some((l) => l.kind === "reanudado" && l.why === "visible" && l.hiddenMs >= 0));
++  p.stop(); close(s);
++});
++
++test("un fallo en onOk (render) no cuenta como desconexión", async () => {
++  const s = await makeServer();
++  const { p, ev } = poller(s, { onOk: () => { throw new Error("render roto"); } });
++  p.start();
++  assert.ok(await until(() => ev.logs.some((l) => l.kind === "render-error")));
++  assert.equal(p.state().fails, 0);
++  p.stop(); close(s);
++});
++
++test("onStuck: tras mucho rato sin datos válidos avisa una sola vez (y no a cada fallo)", async () => {
++  const s = await makeServer(); s.mode = "500";
++  let stuck = 0;
++  const { p } = poller(s, { reloadAfterMs: 150, onStuck: () => stuck++ });
++  p.start();
++  assert.ok(await until(() => stuck >= 1, 3000));
++  await sleep(500); assert.equal(stuck, 1);
++  p.stop(); close(s);
++});
++
++test("registro: durante la caída se acumula (acotado) y se envía todo junto al recuperar", async () => {
++  const s = await makeServer();
++  let up = false, posts = 0;
++  const lg = C.createLogger({ post: (payload) => { posts++; return up ? C.fetchJson(s.url("/api/clientlog"), { timeout: 500, init: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) } }) : Promise.reject(new Error("sin red")); } });
++  for (let i = 0; i < 50; i++) lg.log("fallo", { i });
++  assert.equal(lg.pending(), 30, "acotado a 30");
++  assert.equal(await lg.flush(true), false); assert.equal(lg.pending(), 30, "si no hay red se conserva");
++  up = true;
++  assert.equal(await lg.flush(true), true);
++  assert.equal(s.logged.length, 20); assert.ok(s.logged.every((e) => e.kind === "fallo" && "ago" in e && !("t" in e)));
++  assert.equal(lg.pending(), 10);
++  close(s);
++});
++
++test("recarga como último recurso: solo si el motor responde y con separación mínima", async () => {
++  const store = {}; globalThis.sessionStorage = { getItem: (k) => store[k] || null, setItem: (k, v) => { store[k] = v; } };
++  let reloads = 0;
++  const base = { reload: () => reloads++, log() {}, flush() {} };
++  const down = () => Promise.reject(new Error("sin red"));
++  const up = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
++  assert.equal(await C.reloadIfReachable({ ...base, fetchImpl: down }), false);
++  assert.equal(reloads, 0, "sin motor accesible no recarga (dejaría la página de error de Safari)");
++  assert.equal(await C.reloadIfReachable({ ...base, fetchImpl: up }), true);
++  assert.equal(reloads, 1);
++  assert.equal(await C.reloadIfReachable({ ...base, fetchImpl: up }), false);
++  assert.equal(reloads, 1, "no hay bucle de recargas");
++  delete globalThis.sessionStorage;
++});
+diff --git a/tests/test_overlay_browser.py b/tests/test_overlay_browser.py
+new file mode 100644
+index 0000000..e2b1200
+--- /dev/null
++++ b/tests/test_overlay_browser.py
+@@ -0,0 +1,179 @@
++"""Overlay real en Chromium contra el servidor real: el iPad pierde la conexión de varias formas y la página
++debe recuperar los datos SOLA, sin recargar. Se omite si Playwright/Chromium no están instalados."""
++import os, sys, tempfile, time, unittest
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++LOG = tempfile.mktemp(suffix="_browser_conn.log")
++try:
++    from playwright.sync_api import sync_playwright
++except Exception:                                   # pragma: no cover
++    sync_playwright = None
++from backend import connlog, server
++
++MODE = {"m": "ok"}
++HANG = []
++
++
++def handler(route):
++    m = MODE["m"]
++    if m == "500":
++        route.fulfill(status=500, content_type="application/json", body='{"ok":false,"error":"boom"}')
++    elif m == "junk":
++        route.fulfill(status=200, content_type="application/json", body='{"error":"x"}')
++    elif m == "abort":
++        route.abort("connectionfailed")
++    elif m == "hang":
++        HANG.append(route)                           # la petición queda a medias: ni respuesta ni error
++    else:
++        route.continue_()
++
++
++@unittest.skipIf(sync_playwright is None, "playwright no instalado")
++class OverlayBrowser(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        os.environ["BUNNYLOL_CONN_LOG"] = LOG
++        connlog.reset()
++        cls.srv = server.start_server(0)
++        cls.port = cls.srv.server_address[1]
++        cls.counter = [0]
++        cls.orig = server.advisor.state
++
++        def numbered():                              # estado real + contador para ver que se renueva
++            st = cls.orig()
++            cls.counter[0] += 1
++            st["_n"] = cls.counter[0]
++            return st
++        server.advisor.state = numbered
++        try:
++            cls.pw = sync_playwright().start()
++            cls.browser = cls.pw.chromium.launch()
++        except Exception as e:
++            server.advisor.state = cls.orig
++            cls.srv.shutdown()
++            raise unittest.SkipTest("Chromium no disponible: %r" % (e,))
++        cls.ctx = cls.browser.new_context()
++        cls.page = cls.ctx.new_page()
++        cls.errors = []
++        cls.page.on("pageerror", lambda e: cls.errors.append(str(e)))
++        cls.page.route("**/api/state", handler)
++        cls.page.goto("http://127.0.0.1:%d/overlay" % cls.port)
++        cls.page.evaluate("window.__marker = 'sin-recarga'")
++        cls.wait("() => typeof state !== 'undefined' && state && state._n > 0", 20000)
++
++    @classmethod
++    def tearDownClass(cls):
++        server.advisor.state = cls.orig
++        try:
++            cls.browser.close(); cls.pw.stop()
++        except Exception:
++            pass
++        cls.srv.shutdown(); cls.srv.server_close()
++        connlog.reset()
++
++    @classmethod
++    def wait(cls, js, ms=15000):
++        cls.page.wait_for_function(js, timeout=ms)
++
++    def setUp(self):
++        MODE["m"] = "ok"
++        for r in HANG:
++            try:
++                r.abort()
++            except Exception:
++                pass
++        HANG.clear()
++        self.__class__.wait("() => !document.body.classList.contains('offline')", 20000)
++
++    def pause(self, ms):
++        """Espera dejando que Playwright atienda las rutas interceptadas (time.sleep las bloquearía)."""
++        self.page.wait_for_timeout(ms)
++
++    def n(self):
++        return self.page.evaluate("state._n")
++
++    def alive(self):
++        self.assertEqual(self.page.evaluate("window.__marker"), "sin-recarga", "la página se recargó")
++
++    def recovers(self, ms=20000):
++        before = self.n()
++        MODE["m"] = "ok"
++        self.wait("() => !document.body.classList.contains('offline')", ms)
++        self.page.wait_for_function("(b) => state._n > b", arg=before, timeout=ms)
++        self.alive()
++
++    def keeps_last_data(self):
++        self.assertTrue(self.page.evaluate("!!state && state._n > 0"))               # no se borra lo último
++        self.assertGreater(self.page.evaluate("document.querySelector('#main').children.length"), 0)
++
++    def test_data_flows_and_single_poll_loop(self):
++        a = self.n(); self.pause(3200); b = self.n()
++        self.assertGreaterEqual(b - a, 2)
++        self.assertLessEqual(b - a, 6, "más de ~1 petición por segundo: bucles duplicados")
++
++    def test_http_500_keeps_screen_and_recovers(self):
++        MODE["m"] = "500"
++        self.wait("() => document.body.classList.contains('offline')")
++        self.keeps_last_data()
++        self.assertFalse(self.page.evaluate("!!state.error"), "el error del servidor no debe pasar por estado")
++        self.recovers()
++
++    def test_error_json_with_200_is_not_painted_as_data(self):
++        MODE["m"] = "junk"
++        self.wait("() => document.body.classList.contains('offline')")
++        self.assertFalse(self.page.evaluate("!!state.error"))
++        self.recovers()
++
++    def test_connection_failure_recovers(self):
++        MODE["m"] = "abort"
++        self.wait("() => document.body.classList.contains('offline')")
++        self.keeps_last_data()
++        self.pause(2000)
++        self.recovers()
++
++    def test_browser_offline_then_online(self):
++        self.ctx.set_offline(True)
++        try:
++            self.wait("() => document.body.classList.contains('offline')")
++            self.pause(1500)
++        finally:
++            self.ctx.set_offline(False)
++        self.recovers()
++
++    def test_hung_request_is_dropped_and_recovers(self):
++        MODE["m"] = "hang"                            # petición sin respuesta (Safari suspendido a mitad)
++        self.wait("() => document.body.classList.contains('offline')", 25000)   # el límite duro es de 8 s
++        self.keeps_last_data()
++        self.recovers(30000)
++
++    def test_tab_hidden_then_visible_resumes_immediately(self):
++        js_vis = "(v) => { Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => v}); document.dispatchEvent(new Event('visibilitychange')); }"
++        self.page.evaluate(js_vis, "hidden")
++        self.pause(500)
++        a = self.n(); self.pause(2500)
++        self.assertLessEqual(self.n() - a, 1, "oculta: no debe consultar")
++        self.page.evaluate(js_vis, "visible")
++        self.page.wait_for_function("(b) => state._n > b", arg=a, timeout=1500)    # reanuda sin esperar
++        self.alive()
++
++    def test_outage_is_reported_to_server_log(self):
++        MODE["m"] = "abort"
++        self.wait("() => document.body.classList.contains('offline')")
++        self.pause(2500)
++        self.recovers()
++        end = time.time() + 8
++        txt = ""
++        while time.time() < end and "[cliente:recuperado]" not in txt:
++            for h in list(connlog._get().handlers):
++                h.flush()
++            txt = open(LOG, encoding="utf-8").read() if os.path.exists(LOG) else ""
++            self.pause(300)
++        self.assertIn("[cliente:fallo]", txt)
++        self.assertIn("[cliente:recuperado]", txt)
++        self.assertIn("downMs=", txt)
++
++    def test_zz_no_js_errors(self):
++        self.assertEqual(self.errors, [], "errores de JavaScript en la página")
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_overlay_conn_js.py b/tests/test_overlay_conn_js.py
+new file mode 100644
+index 0000000..6b14dbc
+--- /dev/null
++++ b/tests/test_overlay_conn_js.py
+@@ -0,0 +1,15 @@
++"""Ejecuta las pruebas de ui/conn.js (tests/js/conn.test.js) con Node. Se omite si Node no está instalado."""
++import os, shutil, subprocess, unittest
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++
++
++@unittest.skipIf(shutil.which("node") is None, "Node no instalado (solo hace falta para probar conn.js)")
++class ConnJs(unittest.TestCase):
++    def test_node_suite(self):
++        p = subprocess.run(["node", "--test", os.path.join("tests", "js", "conn.test.js")], cwd=ROOT,
++                           capture_output=True, text=True, timeout=120)
++        self.assertEqual(p.returncode, 0, (p.stdout + p.stderr)[-3000:])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_overlay_server.py b/tests/test_overlay_server.py
+index 9121f8f..cc44ef8 100644
+--- a/tests/test_overlay_server.py
++++ b/tests/test_overlay_server.py
+@@ -32,6 +32,7 @@ def log_text():
+ class OverlayServer(unittest.TestCase):
+     @classmethod
+     def setUpClass(cls):
++        os.environ["BUNNYLOL_CONN_LOG"] = LOG          # otras pruebas pueden haber cambiado la ruta al importarse
+         connlog.reset()
+         cls.srv = server.start_server(0)
+         cls.port = cls.srv.server_address[1]
+diff --git a/ui/app.js b/ui/app.js
+index 4deee27..7a119a5 100644
+--- a/ui/app.js
++++ b/ui/app.js
+@@ -1840,8 +1840,8 @@ async function muLiveTick(force) {
+   mu.liveBusy = true;
+   try {
+     const cur = mu.data && mu.data.rev;
+-    const r = await fetch("/api/matchup/live" + (cur ? "?rev=" + encodeURIComponent(cur) : ""), { cache: "no-store" });
+-    const j = await r.json();
++    const j = await BunnyConn.fetchJson("/api/matchup/live" + (cur ? "?rev=" + encodeURIComponent(cur) : ""),
++      { timeout: 10000, validate: (x) => !!x && typeof x === "object" });
+     if (j && j.ok && !j.unchanged && j.rev !== cur) {
+       j.at_minute = liveMinute(state);
+       mu.data = j;
+@@ -2088,58 +2088,70 @@ function render(st) {
+ 
+ let lastPollOk = Date.now();
+ let pollFails = 0;
+-let pollBusy = false;
+ 
+-async function poll() {
+-  if (pollBusy) return;
+-  pollBusy = true;
+-  try {
+-    const ctl = new AbortController();
+-    const to = setTimeout(() => ctl.abort(), 8000);   // una petición colgada no debe bloquear el poller
+-    let r;
+-    try { r = await fetch("/api/state", { cache: "no-store", signal: ctl.signal }); } finally { clearTimeout(to); }
+-    state = await r.json();
+-    pollFails = 0;
+-    document.body.classList.remove("offline");
+-    render(state);
+-    lastPollOk = Date.now();
+-    if (window.Shell) Shell.setConn(true);
+-  } catch (e) {
+-    console.error("bunnylol poll:", e && e.stack || e);
+-    pollFails++;
+-    if (window.Shell) Shell.setConn(false);
+-    // Un fallo suelto (wifi del iPad) no borra la pantalla: se mantiene lo último y se avisa.
+-    document.body.classList.add("offline");
+-    if (pollFails >= 4 && !state) {
+-      main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexión con el motor local. Reintentando… (si sigue así, reinicia la app)</div></div>`;
+-      secEls.clear();
+-      lastOrderKey = "";
+-    }
+-  } finally {
+-    pollBusy = false;
++// Comunicación con el motor: ui/conn.js (límite duro de tiempo, un solo bucle, reanudación y registro de fallos).
++// Un estado válido trae "status": una respuesta de error ({"error": ...}) NUNCA se pinta como si fueran datos.
++const validState = (j) => !!j && typeof j === "object" && !Array.isArray(j) && !j.error && j.status !== undefined;
++const connLog = BunnyConn.createLogger();
++
++function onStateOk(j) {
++  state = j;
++  pollFails = 0;
++  lastPollOk = Date.now();
++  document.body.classList.remove("offline");
++  if (window.Shell) Shell.setConn(true);
++  render(state);                                  // si el render falla, el poller lo registra pero no lo cuenta como desconexión
++}
++
++function onStateFail(e, fails) {
++  pollFails = fails;
++  if (window.Shell) Shell.setConn(false);
++  // Un fallo suelto (wifi del iPad) no borra la pantalla: se mantiene lo último y se avisa.
++  document.body.classList.add("offline");
++  if (fails >= 4 && !state) {
++    main.innerHTML = `<div class="card"><div class="loading-txt" style="color:var(--red)">Sin conexión con el motor local. Reintentando… (si sigue así, reinicia la app)</div></div>`;
++    secEls.clear();
++    lastOrderKey = "";
+   }
+ }
+ 
+-// Un solo poller, y se pausa cuando la ventana esta oculta (ahorra GPU/CPU y FPS)
++const poller = BunnyConn.createPoller({
++  interval: 1000,
++  isVisible: () => document.visibilityState === "visible",   // oculto no consulta (ahorra GPU/CPU y FPS)
++  fetch: () => BunnyConn.fetchJson("/api/state", { timeout: 8000, validate: validState }),
++  onOk: onStateOk,
++  onFail: onStateFail,
++  log: connLog.log,
++  flush: connLog.flush,
++  // Último recurso (tras 2 min sin datos válidos): recargar solo si el motor responde; nunca en bucle.
++  onStuck: () => BunnyConn.reloadIfReachable({ log: connLog.log, flush: connLog.flush }),
++});
++
++// Refresco inmediato (p. ej. tras cambiar un ajuste). Si ya hay una petición en curso, espera a esa.
++async function poll() {
++  await poller.refreshNow();
++}
++
++// Un solo bucle (start() es idempotente).
+ function startPoller() {
+-  if (window.__pollTick) return;
+-  window.__pollTick = setInterval(() => {
+-    if (document.visibilityState === "visible") poll();
+-  }, 1000);
++  poller.start();
++}
++
++// Safari suspende pestañas y congela temporizadores: al volver, reintentar YA en vez de esperar.
++let lastResume = 0;
++function resumePoll(why) {
++  const t = Date.now();
++  if (t - lastResume < 500) return;               // visibilitychange + pageshow + online suelen llegar juntos
++  lastResume = t;
++  poller.resume(why);
+ }
+ document.addEventListener("visibilitychange", () => {
+-  if (document.visibilityState === "visible") {
+-    poll();
+-    startPoller();
+-  }
++  if (document.visibilityState === "visible") resumePoll("visible");
++  else poller.hidden();
+ });
+-
+-// Watchdog: si lleva rato sin datos viva, recarga para recuperarse
+-setInterval(() => {
+-  if (document.visibilityState === "visible" && Date.now() - lastPollOk > 45000) {
+-    location.reload();
+-  }
+-}, 5000);
++window.addEventListener("pageshow", (e) => { if (e.persisted) resumePoll("pageshow"); });
++window.addEventListener("online", () => resumePoll("online"));
++window.addEventListener("offline", () => connLog.log("sin_red", {}));
+ 
+ let lastAccess = null;
+ 
+diff --git a/ui/conn.js b/ui/conn.js
+new file mode 100644
+index 0000000..3d19a2e
+--- /dev/null
++++ b/ui/conn.js
+@@ -0,0 +1,224 @@
++/* BunnyConn: comunicación resistente entre el overlay (PC o iPad) y el motor local.
++ *
++ * Por qué existe: Safari en el iPad suspende pestañas y cambia de wifi. Una petición que se queda a medias
++ * (cabeceras recibidas, cuerpo sin terminar) dejaba el poller bloqueado para siempre, y una respuesta de error
++ * se pintaba como si fueran datos: la interfaz seguía visible pero sin información.
++ *
++ *  - fetchJson: límite DURO de tiempo que incluye la lectura del cuerpo, comprueba r.ok y valida la respuesta.
++ *  - createPoller: un único bucle (setTimeout encadenado, nunca peticiones solapadas), backoff tras fallos,
++ *    reanudación inmediata al volver a primer plano / recuperar red / detectar un salto de reloj,
++ *    y un vigilante que rearma el bucle si una petición queda colgada.
++ *  - log: eventos de diagnóstico que se envían a /api/clientlog cuando hay conexión (cache/overlay_conn.log).
++ * Sin dependencias; también se carga en Node para las pruebas (module.exports).
++ */
++(function (root) {
++  "use strict";
++
++  function errMsg(e) {
++    return String((e && (e.message || e.name)) || e || "error").slice(0, 160);
++  }
++
++  function fetchJson(url, o) {
++    o = o || {};
++    var timeout = o.timeout || 8000;
++    var doFetch = o.fetchImpl || (root.fetch && root.fetch.bind(root));
++    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
++    var timer;
++    var deadline = new Promise(function (_, reject) {
++      timer = setTimeout(function () {
++        if (ctl) { try { ctl.abort(); } catch (e) {} }
++        reject(new Error("timeout " + timeout + "ms " + url));
++      }, timeout);
++    });
++    var init = Object.assign({ cache: "no-store" }, o.init || {});
++    if (ctl) init.signal = ctl.signal;
++    var work = doFetch(url, init).then(function (r) {
++      if (!r.ok) { var e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
++      return r.json();
++    }).then(function (j) {
++      if (o.validate && !o.validate(j)) throw new Error("respuesta inválida " + url);
++      return j;
++    });
++    work.catch(function () {});            // si gana el límite, el error tardío no debe quedar sin atender
++    return Promise.race([work, deadline]).then(
++      function (v) { clearTimeout(timer); return v; },
++      function (e) { clearTimeout(timer); throw e; }
++    );
++  }
++
++  /* ------------------------------------------------------------------ registro hacia el servidor */
++  function createLogger(o) {
++    o = o || {};
++    var now = o.now || function () { return Date.now(); };
++    var buf = [];
++    var sending = false;
++    var lastFlush = 0;
++    var post = o.post || function (payload) {
++      return fetchJson("/api/clientlog", { timeout: 5000, init: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) } });
++    };
++    function log(kind, fields) {
++      var e = Object.assign({ kind: kind, t: now() }, fields || {});
++      buf.push(e);
++      if (buf.length > 30) buf.splice(0, buf.length - 30);
++      try { if (root.console) console.warn("bunnylol:", kind, fields || ""); } catch (x) {}
++    }
++    function flush(force) {
++      if (sending || !buf.length) return Promise.resolve(false);
++      if (!force && now() - lastFlush < 5000) return Promise.resolve(false);
++      var batch = buf.slice(0, 20);
++      sending = true; lastFlush = now();
++      var payload = {
++        ua: (root.navigator && root.navigator.userAgent) || "",
++        page: (root.location && root.location.pathname) || "",
++        events: batch.map(function (e) { var c = Object.assign({}, e); c.ago = Math.max(0, Math.round((now() - e.t) / 1000)); delete c.t; return c; })
++      };
++      return post(payload).then(function () {
++        buf.splice(0, batch.length); sending = false; return true;
++      }, function () { sending = false; return false; });     // sin conexión: se conserva para el siguiente intento
++    }
++    return { log: log, flush: flush, pending: function () { return buf.length; } };
++  }
++
++  /* ------------------------------------------------------------------ poller */
++  function createPoller(o) {
++    var c = Object.assign({
++      interval: 1000, hardMs: 12000, maxBackoff: 10000, jumpMs: 6000, beatMs: 2000, reloadAfterMs: 120000,
++      now: function () { return Date.now(); },
++      // Envueltos: en los navegadores setTimeout & co. fallan ("Illegal invocation") si se llaman como método de otro objeto.
++      setTimeout: function (f, ms) { return setTimeout(f, ms); }, clearTimeout: function (t) { return clearTimeout(t); },
++      setInterval: function (f, ms) { return setInterval(f, ms); }, clearInterval: function (t) { return clearInterval(t); },
++      isVisible: function () { return true; }, fetch: null, onOk: function () {}, onFail: function () {},
++      onStuck: null, log: function () {}, flush: function () {}
++    }, o || {});
++    var running = false, loop = 0, gen = 0, timer = null, beat = null;
++    var busy = false, busySince = 0, current = null;
++    var fails = 0, lastOk = c.now(), downSince = null, lastErr = "", lastBeat = c.now(), lastStuck = 0, hiddenAt = null;
++    var stats = { ok: 0, failed: 0, restarts: 0 };
++    var renderErrs = 0, lastRenderErr = "";
++
++    function delay() { return fails === 0 ? c.interval : Math.min(c.maxBackoff, c.interval * Math.pow(2, Math.min(fails, 4))); }
++    function schedule(ms) {
++      if (timer) c.clearTimeout(timer);
++      var id = loop;
++      timer = c.setTimeout(function () { tick(id); }, ms);
++    }
++
++    function runOnce() {
++      if (busy) return current;
++      busy = true; busySince = c.now();
++      var my = ++gen;
++      current = Promise.resolve().then(function () { return c.fetch(); }).then(function (data) {
++        if (my !== gen) return;                       // el bucle se rearmó mientras esperaba: resultado obsoleto
++        busy = false;
++        var wasDown = fails > 0;
++        var downMs = downSince != null ? c.now() - downSince : 0;
++        var nf = fails;
++        fails = 0; downSince = null; lastOk = c.now(); stats.ok++;
++        try { c.onOk(data); } catch (e) {
++          var m = errMsg(e); renderErrs++;
++          if (m !== lastRenderErr || renderErrs % 60 === 0) { lastRenderErr = m; c.log("render-error", { error: m, count: renderErrs }); }
++        }
++        if (wasDown) {
++          c.log("recuperado", { downMs: downMs, fails: nf, lastError: lastErr });
++          c.flush(true);
++        }
++      }, function (err) {
++        if (my !== gen) return;
++        busy = false;
++        fails++; stats.failed++; lastErr = errMsg(err);
++        if (downSince == null) downSince = c.now();
++        if (fails === 1 || fails % 10 === 0) c.log("fallo", { fails: fails, error: lastErr, visible: c.isVisible() });
++        try { c.onFail(err, fails); } catch (e) {}
++        var t = c.now();
++        if (c.onStuck && t - lastOk > c.reloadAfterMs && t - lastStuck > 60000 && c.isVisible()) {
++          lastStuck = t;
++          try { c.onStuck(t - lastOk); } catch (e) {}
++        }
++      });
++      return current;
++    }
++
++    function tick(id) {
++      timer = null;
++      if (!running || id !== loop) return;
++      if (!c.isVisible()) { schedule(c.interval); return; }
++      runOnce().then(function () { if (running && id === loop) schedule(delay()); });
++    }
++
++    /* Rearma el bucle: invalida cualquier petición en curso (su resultado se ignora) y programa otra. */
++    function restart(reason, immediate) {
++      loop++; gen++; busy = false; current = null; stats.restarts++;
++      if (reason) c.log("rearmado", { why: reason, fails: fails });
++      if (running) schedule(immediate ? 0 : delay());
++    }
++
++    /* El iPad volvió (primer plano, red, pestaña restaurada): no esperar al siguiente turno del temporizador. */
++    function resume(why) {
++      if (!running) return;
++      var t = c.now();
++      var gap = hiddenAt != null ? t - hiddenAt : 0;
++      hiddenAt = null;
++      c.log("reanudado", { why: why, hiddenMs: gap, fails: fails });
++      restart(null, true);
++    }
++
++    function heartbeat() {
++      var t = c.now();
++      var gapMs = t - lastBeat;
++      lastBeat = t;
++      if (!running) return;
++      if (gapMs > c.jumpMs) {                         // Safari congeló los temporizadores (suspensión / pantalla bloqueada)
++        c.log("salto_reloj", { gapMs: gapMs });
++        restart(null, true);
++      } else if (busy && t - busySince > c.hardMs) {   // petición colgada más allá del límite duro
++        c.log("colgado", { busyMs: t - busySince });
++        restart(null, true);
++      }
++      c.flush(false);
++    }
++
++    return {
++      start: function () {
++        if (running) return false;                      // un solo bucle, siempre
++        running = true; lastBeat = c.now();
++        beat = c.setInterval(heartbeat, c.beatMs);
++        restart(null, true);
++        return true;
++      },
++      stop: function () {
++        running = false; loop++; gen++; busy = false;
++        if (timer) c.clearTimeout(timer);
++        if (beat) c.clearInterval(beat);
++        timer = beat = null;
++      },
++      refreshNow: function () { return running ? runOnce() : Promise.resolve(); },
++      hidden: function () { if (hiddenAt == null) hiddenAt = c.now(); },
++      resume: resume,
++      restart: function (why) { restart(why || "manual", true); },
++      state: function () { return { running: running, busy: busy, fails: fails, lastOk: lastOk, lastErr: lastErr, stats: stats, downSince: downSince }; }
++    };
++  }
++
++  /* Recarga como ÚLTIMO recurso: solo si el motor responde a /api/ping (si no, recargar dejaría la página de
++   * error de Safari y habría que volver a entrar al enlace) y como mucho una vez cada 5 minutos. */
++  function reloadIfReachable(o) {
++    o = o || {};
++    var storage = null;
++    try { storage = root.sessionStorage; } catch (e) {}
++    var KEY = "bunnyconn.reload";
++    var last = 0;
++    try { last = Number(storage && storage.getItem(KEY)) || 0; } catch (e) {}
++    if (Date.now() - last < (o.minGapMs || 300000)) return Promise.resolve(false);
++    return fetchJson("/api/ping", { timeout: 4000, fetchImpl: o.fetchImpl }).then(function () {
++      try { storage && storage.setItem(KEY, String(Date.now())); } catch (e) {}
++      (o.log || function () {})("recarga", { why: "sin datos válidos con el motor accesible" });
++      (o.flush || function () {})(true);
++      (o.reload || function () { root.location.reload(); })();
++      return true;
++    }, function () { return false; });
++  }
++
++  var api = { fetchJson: fetchJson, createLogger: createLogger, createPoller: createPoller, reloadIfReachable: reloadIfReachable, errMsg: errMsg };
++  if (typeof module !== "undefined" && module.exports) module.exports = api;
++  else root.BunnyConn = api;
++})(typeof window !== "undefined" ? window : globalThis);
+diff --git a/ui/overlay.html b/ui/overlay.html
+index 24d6d9f..0b53e38 100644
+--- a/ui/overlay.html
++++ b/ui/overlay.html
+@@ -124,6 +124,7 @@
+ 
+   <div id="ctBadge" class="hidden">click-through activo · Ctrl+Shift+B</div>
+ </div>
++<script src="/static/conn.js"></script>
+ <script src="/static/shell.js"></script>
+ <script src="/static/app.js"></script>
+ </body>
+diff --git a/ui/shell.js b/ui/shell.js
+index 11940af..54fb09e 100644
+--- a/ui/shell.js
++++ b/ui/shell.js
+@@ -170,8 +170,14 @@
+   }
+ 
+   function loadMeta() {
+-    var ctl = new AbortController(); setTimeout(function () { ctl.abort(); }, 8000);
+-    return fetch("/api/meta", { cache: "no-store", signal: ctl.signal }).then(function (r) { return r.json(); })
++    var req;
++    if (window.BunnyConn) {
++      req = BunnyConn.fetchJson("/api/meta", { timeout: 8000 });     // límite duro (incluye leer el cuerpo) y comprueba r.ok
++    } else {
++      var ctl = new AbortController(); setTimeout(function () { ctl.abort(); }, 8000);
++      req = fetch("/api/meta", { cache: "no-store", signal: ctl.signal }).then(function (r) { return r.json(); });
++    }
++    return req
+       .then(function (m) { meta = m; connOk = true; paintStatus(); if (view === "datos" || view === "diagnostico") renderExtra(); })
+       .catch(function () { connOk = false; paintStatus(); });
+   }
+-- 
+2.43.0
+

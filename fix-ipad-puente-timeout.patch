@@ -1,0 +1,159 @@
+From 9140de8f30926da39321d432a84df8a0db2e53fe Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 16:50:48 -0500
+Subject: [PATCH] Puente iPad: tope de 1.5 s para conectar con la app local
+
+Con la app caida, el puente esperaba hasta 5 s (CONNECT_TIMEOUT) a que el
+sistema rechazara la conexion a 127.0.0.1. En Windows ese rechazo tarda ~2 s,
+asi que el iPad recibia el cierre a los ~2.04 s y la prueba
+test_app_down_then_back_recovers_without_restarting_bridge (limite 2.0 s)
+fallaba de forma reproducible.
+
+- CONNECT_TIMEOUT pasa de 5.0 a 1.5 s: la app esta en el mismo PC y conecta en
+  milisegundos. Se queda por encima de ~1 s (reenvio de SYN de una app saturada)
+  y por debajo de los 2 s del rechazo lento de Windows.
+- El tope se pasa por parametro (connect_timeout) y la conexion sale por
+  Bridge._connect_app(), que permite probarla sin depender del sistema.
+- Pruebas nuevas: rechazo lento simulado (<2.0 s) y tope corto. El limite de
+  2.0 s de la prueba original no se toca.
+- herramientas/ipad_bridge.py sigue siendo copia exacta.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oCvi7YPU4WhvzDkTL3fQW
+---
+ herramientas/ipad_bridge.py | 14 ++++++++++----
+ ipad_bridge.py              | 14 ++++++++++----
+ tests/test_ipad_bridge.py   | 23 +++++++++++++++++++++++
+ 3 files changed, 43 insertions(+), 8 deletions(-)
+
+diff --git a/herramientas/ipad_bridge.py b/herramientas/ipad_bridge.py
+index b6df0e1..ea26437 100644
+--- a/herramientas/ipad_bridge.py
++++ b/herramientas/ipad_bridge.py
+@@ -22,7 +22,9 @@ import time
+ from logging.handlers import RotatingFileHandler
+ 
+ IDLE_TIMEOUT = 90.0        # s sin datos en ninguna dirección: se cierra (el servidor de la app corta a los 30 s)
+-CONNECT_TIMEOUT = 5.0
++CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC (127.0.0.1), así que conecta en milisegundos.
++                           # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
++                           # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
+ MAX_CONNECTIONS = 200
+ SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
+ 
+@@ -83,9 +85,9 @@ def tune(sock, idle=IDLE_TIMEOUT):
+ 
+ class Bridge:
+     def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
+-                 max_conn=MAX_CONNECTIONS, logger=None):
++                 max_conn=MAX_CONNECTIONS, logger=None, connect_timeout=CONNECT_TIMEOUT):
+         self.port_app, self.port_bridge, self.host = port_app, port_bridge, host
+-        self.idle, self.max_conn = idle, max_conn
++        self.idle, self.max_conn, self.connect_timeout = idle, max_conn, connect_timeout
+         self.log = logger or make_logger()
+         self.stats = {"accepted": 0, "app_unreachable": 0, "rejected": 0, "idle_closed": 0, "accept_errors": 0,
+                       "rebinds": 0, "active": 0}
+@@ -118,6 +120,10 @@ class Bridge:
+         srv.settimeout(1.0)               # para poder parar y vigilar el estado sin quedarse en accept() eternamente
+         return srv
+ 
++    def _connect_app(self):
++        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout."""
++        return socket.create_connection(("127.0.0.1", self.port_app), timeout=self.connect_timeout)
++
+     # ---- reenvío
+     def _copy(self, src, dst, done):
+         try:
+@@ -153,7 +159,7 @@ class Bridge:
+         app = None
+         try:
+             try:
+-                app = socket.create_connection(("127.0.0.1", self.port_app), timeout=CONNECT_TIMEOUT)
++                app = self._connect_app()
+             except OSError as e:
+                 self._bump("app_unreachable")
+                 if self._app_down_since is None:
+diff --git a/ipad_bridge.py b/ipad_bridge.py
+index b6df0e1..ea26437 100644
+--- a/ipad_bridge.py
++++ b/ipad_bridge.py
+@@ -22,7 +22,9 @@ import time
+ from logging.handlers import RotatingFileHandler
+ 
+ IDLE_TIMEOUT = 90.0        # s sin datos en ninguna dirección: se cierra (el servidor de la app corta a los 30 s)
+-CONNECT_TIMEOUT = 5.0
++CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC (127.0.0.1), así que conecta en milisegundos.
++                           # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
++                           # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
+ MAX_CONNECTIONS = 200
+ SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
+ 
+@@ -83,9 +85,9 @@ def tune(sock, idle=IDLE_TIMEOUT):
+ 
+ class Bridge:
+     def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
+-                 max_conn=MAX_CONNECTIONS, logger=None):
++                 max_conn=MAX_CONNECTIONS, logger=None, connect_timeout=CONNECT_TIMEOUT):
+         self.port_app, self.port_bridge, self.host = port_app, port_bridge, host
+-        self.idle, self.max_conn = idle, max_conn
++        self.idle, self.max_conn, self.connect_timeout = idle, max_conn, connect_timeout
+         self.log = logger or make_logger()
+         self.stats = {"accepted": 0, "app_unreachable": 0, "rejected": 0, "idle_closed": 0, "accept_errors": 0,
+                       "rebinds": 0, "active": 0}
+@@ -118,6 +120,10 @@ class Bridge:
+         srv.settimeout(1.0)               # para poder parar y vigilar el estado sin quedarse en accept() eternamente
+         return srv
+ 
++    def _connect_app(self):
++        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout."""
++        return socket.create_connection(("127.0.0.1", self.port_app), timeout=self.connect_timeout)
++
+     # ---- reenvío
+     def _copy(self, src, dst, done):
+         try:
+@@ -153,7 +159,7 @@ class Bridge:
+         app = None
+         try:
+             try:
+-                app = socket.create_connection(("127.0.0.1", self.port_app), timeout=CONNECT_TIMEOUT)
++                app = self._connect_app()
+             except OSError as e:
+                 self._bump("app_unreachable")
+                 if self._app_down_since is None:
+diff --git a/tests/test_ipad_bridge.py b/tests/test_ipad_bridge.py
+index 5c2313a..e0fa68a 100644
+--- a/tests/test_ipad_bridge.py
++++ b/tests/test_ipad_bridge.py
+@@ -101,6 +101,29 @@ class BridgeTests(unittest.TestCase):
+             h.flush()
+         self.assertIn("[app_caida]", open(os.environ["BUNNYLOL_BRIDGE_LOG"], encoding="utf-8").read())
+ 
++    def test_app_down_with_slow_os_refusal_still_closes_quickly(self):
++        # En Windows, conectar a un puerto cerrado de 127.0.0.1 puede tardar ~2 s en ser rechazado.
++        # El puente no debe esperar lo que tarde el sistema: corta en su propio tope (connect_timeout).
++        b = self.bridge()
++        stop_app(self.app)
++        OS_REFUSAL = 2.05
++
++        def slow_refusal():                       # como create_connection(timeout=...): el SO tarda y el tope corta antes
++            time.sleep(min(OS_REFUSAL, b.connect_timeout))
++            raise (ConnectionRefusedError if b.connect_timeout >= OS_REFUSAL else socket.timeout)("rechazo lento simulado")
++
++        b._connect_app = slow_refusal
++        t0 = time.time()
++        self.assertEqual(get(b.port_bridge), b"")
++        self.assertLess(time.time() - t0, 2.0)
++        self.assertGreaterEqual(b.stats["app_unreachable"], 1)
++        self.assertTrue(wait(lambda: b.stats["active"] == 0))
++
++    def test_connect_timeout_to_local_app_is_short(self):
++        # La app corre en este mismo PC: un tope largo solo sirve para dejar al iPad esperando.
++        self.assertLessEqual(ib.CONNECT_TIMEOUT, 1.5)
++        self.assertEqual(self.bridge().connect_timeout, ib.CONNECT_TIMEOUT)
++
+     def test_mute_connection_is_closed_by_idle_timeout(self):
+         b = self.bridge(idle=0.5)
+         mute = socket.create_connection(("127.0.0.1", b.port_bridge))   # iPad dormido: conecta y no dice nada
+-- 
+2.43.0
+

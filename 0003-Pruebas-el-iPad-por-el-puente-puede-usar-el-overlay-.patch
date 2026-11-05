@@ -1,0 +1,62 @@
+From 3819e979e04002e49b95591d27efd071f308675d Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Wed, 4 Nov 2026 07:42:35 -0500
+Subject: [PATCH 3/3] Pruebas: el iPad por el puente puede usar el overlay pero
+ no la administracion
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ tests/test_overlay_server.py | 36 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/tests/test_overlay_server.py b/tests/test_overlay_server.py
+index 7dea813..0748ff8 100644
+--- a/tests/test_overlay_server.py
++++ b/tests/test_overlay_server.py
+@@ -200,6 +200,42 @@ class OverlayServer(unittest.TestCase):
+         self.assertFalse(H("127.0.0.1")._is_remote())
+         self.assertFalse(H("::1")._is_remote())
+ 
++    def test_is_bridge_by_source_and_host_fallback(self):
++        class FH(dict):
++            def get(self, k, d=None): return dict.get(self, k, d)
++
++        def mk(addr, host):
++            class H(server.Handler):
++                def __init__(self): self.client_address = (addr, 1); self.headers = FH({"Host": host} if host else {})
++            return H()
++        self.assertTrue(mk("127.0.0.2", "127.0.0.1:8765")._is_bridge())      # Host falsificado no sirve de nada
++        self.assertFalse(mk("127.0.0.2", "127.0.0.1:8765")._require_local())
++        self.assertTrue(mk("127.0.0.1", "192.168.1.5:8766")._is_bridge())    # puente antiguo (llega como 127.0.0.1)
++        self.assertFalse(mk("127.0.0.1", "127.0.0.1:8765")._is_bridge())
++        self.assertTrue(mk("127.0.0.1", "localhost:8765")._require_local())
++        self.assertTrue(mk("127.0.0.1", "[::1]:8765")._require_local())
++
++    def test_ipad_through_real_bridge_can_use_overlay_but_not_admin(self):
++        import ipad_bridge
++        b = ipad_bridge.Bridge(self.port, 0, host="127.0.0.1").start()
++        try:
++            bp = b.port_bridge
++            server.advisor.state = lambda: {"status": "ready"}
++            self.assertEqual(call(bp, "/api/state"), (200, {"status": "ready"}))
++            self.assertEqual(call(bp, "/api/ping")[0], 200)
++            self.assertEqual(call(bp, "/api/clientlog", {"events": [{"kind": "k"}]})[0], 200)
++            self.assertEqual(call(bp, "/api/ai/config")[0], 403)
++            self.assertEqual(call(bp, "/api/settings", {"update_repo": "x/y"})[0], 403)
++            self.assertEqual(call(bp, "/api/quit", {})[0], 403)                 # el iPad no cierra la app
++            orig = server.config.save_settings
++            server.config.save_settings = lambda u: dict(u)
++            try:
++                self.assertEqual(call(bp, "/api/settings", {"role": "5"})[0], 200)   # pero sí cambia su rol/vista
++            finally:
++                server.config.save_settings = orig
++        finally:
++            b.stop()
++
+     def test_restart_same_port_and_clients_recover(self):
+         s1 = server.start_server(0)
+         port = s1.server_address[1]
+-- 
+2.43.0
+

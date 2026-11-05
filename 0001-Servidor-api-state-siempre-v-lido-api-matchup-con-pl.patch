@@ -1,0 +1,474 @@
+From 65ec7cb1263569980191267e87669244191bc285 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 06:56:37 -0500
+Subject: [PATCH 1/3] =?UTF-8?q?Servidor:=20/api/state=20siempre=20v=C3=A1l?=
+ =?UTF-8?q?ido,=20/api/matchup=20con=20plazo,=20ajustes=20remotos=20acotad?=
+ =?UTF-8?q?os?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- /api/state: si el motor falla responde 200 con la última respuesta buena (o un esqueleto) marcada
+  degraded + backend_error; el overlay lo registra y muestra un aviso en vez de tomarlo por desconexión.
+- /api/matchup: una sola ejecución a la vez compartida entre peticiones; plazo de 25 s (504 JSON con
+  pending) sin dejar hilos apilados; el cliente usa fetchJson con tope de 40 s y lee e.body.
+- Advisor.update serializado (RLock) y refresh() lee lo último dentro del bloqueo (ajustes vs poller).
+- POST /api/settings remoto: update_repo/update_branch/auto_update/port/atajos solo desde el PC.
+- /static: comprobación con commonpath (antes el prefijo permitía carpetas hermanas tipo ui_secret).
+- start_server reintenta unos segundos si el puerto aún está ocupado tras un reinicio.
+- Pruebas: 14 nuevas (263 passed).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ backend/recommend.py         |  11 +++
+ backend/server.py            | 150 +++++++++++++++++++++++----------
+ tests/test_overlay_server.py | 158 +++++++++++++++++++++++++++++++++--
+ ui/app.js                    |   5 ++
+ ui/shell.css                 |   1 +
+ 5 files changed, 274 insertions(+), 51 deletions(-)
+
+diff --git a/backend/recommend.py b/backend/recommend.py
+index dfb9046..da96496 100644
+--- a/backend/recommend.py
++++ b/backend/recommend.py
+@@ -67,6 +67,7 @@ def fmt_time(seconds):
+ class Advisor:
+     def __init__(self):
+         self._lock = threading.Lock()
++        self._update_lock = threading.RLock()   # serializa update(): el poller y los ajustes no se pisan
+         self.overview = None
+         self.overview_key = None
+         self.overview_champ = None
+@@ -210,6 +211,16 @@ class Advisor:
+         return mode
+ 
+     def update(self, live, lcu, mock=False):
++        with self._update_lock:
++            return self._update(live, lcu, mock)
++
++    def refresh(self):
++        """Reaplica la partida ACTUAL (p. ej. tras cambiar un ajuste). Lee lo último DENTRO del bloqueo: antes se
++        llamaba update(self.last_live, ...) con una copia vieja y pisaba lo que el poller acababa de leer."""
++        with self._update_lock:
++            return self._update(self.last_live, self.last_lcu, self.mock)
++
++    def _update(self, live, lcu, mock=False):
+         v = ddragon.version
+         if v and self._dd_ver and v != self._dd_ver:
+             # Parche nuevo: descarta lo cacheado del parche anterior y vuelve a pedir datos.
+diff --git a/backend/server.py b/backend/server.py
+index 5e5dc10..cf460fd 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -53,6 +53,73 @@ def _health():
+         return {"error": str(e)}
+ 
+ 
++# Ajustes que cambian lo que el PC EJECUTA (actualizador automático, puerto, atajos): solo desde el propio PC.
++REMOTE_BLOCKED_SETTINGS = frozenset({"update_repo", "update_branch", "auto_update", "port",
++                                     "toggle_combo", "ct_combo", "quit_combo", "clickthrough"})
++MATCHUP_DEADLINE = 25.0       # s que espera una petición de /api/matchup antes de responder «sigue calculando»
++
++_state_lock = threading.Lock()
++_state_last = None            # última respuesta buena de /api/state (para degradar sin perder la pantalla)
++
++
++def _state_skeleton(msg):
++    return {"status": "idle", "phase": None, "mock": False, "ready": False, "degraded": True, "backend_error": msg,
++            "matchups": [], "tips": [], "situations": [], "rune_advice": [], "needs": [], "enemies": [], "allies": [],
++            "items": {}, "stats": {}, "runes": {}, "spells": {}, "skills": {}, "settings": config.load_settings()}
++
++
++def _state_response(ip="?"):
++    """/api/state SIEMPRE devuelve un objeto con `status`. Si el motor falla, se sirve lo último bueno marcado como
++    `degraded` + `backend_error` (el overlay lo muestra), nunca un 500 que el overlay tomaría por desconexión."""
++    global _state_last
++    try:
++        st = advisor.state()
++        if not isinstance(st, dict) or "status" not in st:
++            raise ValueError("el motor devolvió un estado sin 'status'")
++        with _state_lock:
++            _state_last = st
++        return st
++    except Exception as e:
++        connlog.write("error_state", ip=ip, error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
++        msg = f"{type(e).__name__}: {e}"[:200]
++        with _state_lock:
++            last = _state_last
++        out = dict(last) if isinstance(last, dict) else _state_skeleton(msg)
++        out["degraded"] = True
++        out["backend_error"] = msg
++        return out
++
++
++_mu_lock = threading.Lock()
++_mu_flight = None             # {"done": Event, "res": (code, body)} de la petición en curso (una sola a la vez)
++
++
++def _matchup_guarded(deadline=None):
++    """Una sola ejecución de analyze_matchup a la vez: las peticiones simultáneas comparten el resultado (antes cada
++    una lanzaba su cálculo y la IA lenta las apilaba). Cada petición espera como mucho `deadline` s."""
++    global _mu_flight
++    deadline = MATCHUP_DEADLINE if deadline is None else deadline
++    with _mu_lock:
++        fl = _mu_flight
++        if fl is None or fl["done"].is_set():
++            fl = _mu_flight = {"done": threading.Event(), "res": None}
++
++            def work(f=fl):
++                try:
++                    f["res"] = (200, advisor.analyze_matchup())
++                except Exception as e:
++                    f["res"] = (500, {"ok": False, "error": f"Error interno: {e!r}"})
++                finally:
++                    f["done"].set()
++            threading.Thread(target=work, daemon=True, name="matchup").start()
++    if fl["done"].wait(deadline):
++        return fl["res"]
++    connlog.event("matchup_lento", every=10.0, seg=deadline)
++    return 504, {"ok": False, "pending": True,
++                 "error": "El análisis tarda más de lo normal (IA lenta). Sigue en curso: vuelve a pulsar en unos segundos."}
++
++
++
+ class Handler(BaseHTTPRequestHandler):
+     protocol_version = "HTTP/1.1"
+     timeout = 30   # una conexión muerta (iPad dormido, wifi cortado) no deja el hilo colgado para siempre
+@@ -84,11 +151,15 @@ class Handler(BaseHTTPRequestHandler):
+         return host not in ("127.0.0.1", "::1", "localhost")
+ 
+     def _is_bridge(self):
+-        """Detecta si la petición viene del puente iPad (que reenvía desde 127.0.0.1).
+-        El puente expone el servicio en IP:puerto público; el Host header del iPad
+-        será la IP pública del PC + puerto del puente, no 127.0.0.1."""
++        """True si la petición llega por el puente del iPad.
++        Principal: el puente sale desde 127.0.0.2 (ver ipad_bridge._connect_app), no falsificable desde el iPad.
++        Respaldo (puente antiguo, o sistema sin 127.0.0.2: llega como 127.0.0.1): una cabecera Host que no sea
++        de este PC. El Host lo controla el cliente, por eso solo es una red de seguridad adicional."""
++        host = self.client_address[0] if self.client_address else ""
++        if host == "127.0.0.2":
++            return True
+         if not self._is_remote():
+-            host_hdr = (self.headers.get("Host") or "").split(":")[0]
++            host_hdr = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]") if self.headers.get("Host") else ""
+             return host_hdr not in ("127.0.0.1", "localhost", "::1")
+         return False
+ 
+@@ -177,7 +248,12 @@ class Handler(BaseHTTPRequestHandler):
+         if path.startswith("/static/"):
+             rel = path[len("/static/"):]
+             full = os.path.normpath(os.path.join(config.UI_DIR, rel))
+-            if not full.startswith(os.path.normpath(config.UI_DIR)):
++            base = os.path.normpath(config.UI_DIR)
++            try:
++                inside = os.path.commonpath([base, full]) == base
++            except ValueError:
++                inside = False
++            if not inside:
+                 self._send(403, {"error": "forbidden"})
+                 return
+             self._serve_file(full, "no-cache")
+@@ -187,19 +263,7 @@ class Handler(BaseHTTPRequestHandler):
+             self._send(200, {"ok": True, "t": time.time(), "boot": connlog.BOOT_ID})
+             return
+         if path == "/api/state":
+-            try:
+-                st = advisor.state()
+-                self._send(200, st)
+-            except Exception as e:
+-                connlog.write("error_state", ip=self._ip(), error=repr(e), tb=traceback.format_exc().splitlines()[-3:])
+-                # Devolver estructura compatible con el overlay en lugar de 500 crudo
+-                self._send(200, {
+-                    "status": "error",
+-                    "phase": getattr(advisor, "phase", "idle"),
+-                    "error": str(e)[:200],
+-                    "mock": False,
+-                    "ready": ddragon.ready
+-                })
++            self._send(200, _state_response(self._ip()))
+             return
+         if path == "/api/settings":
+             self._send(200, config.load_settings())
+@@ -352,39 +416,25 @@ class Handler(BaseHTTPRequestHandler):
+             return
+         path = urllib.parse.urlparse(self.path).path
+         if path == "/api/settings":
+-            if not self._require_local():
+-                self._send(403, {"ok": False, "error": "La configuración solo se puede cambiar desde el PC local."})
+-                return
+             try:
+                 update = self._body()
++                if not isinstance(update, dict):
++                    raise ValueError("se esperaba un objeto JSON")
++                if not self._require_local():          # iPad/red: puede cambiar rol, modo, vista… no lo que ejecuta el PC
++                    bloqueadas = sorted(k for k in update if k in REMOTE_BLOCKED_SETTINGS)
++                    if bloqueadas:
++                        connlog.write("ajustes_bloqueados", ip=self._ip(), claves=",".join(bloqueadas))
++                        self._send(403, {"ok": False, "error": "Esos ajustes solo se cambian desde el PC: " + ", ".join(bloqueadas)})
++                        return
+                 saved = config.save_settings(update)
+-                advisor.update(advisor.last_live, advisor.last_lcu, advisor.mock)
++                advisor.refresh()
+                 self._send(200, saved)
+             except Exception as e:
+                 self._send(400, {"error": str(e)})
+             return
+         if path == "/api/matchup":
+-            # Timeout para /api/matchup (analyze_matchup): evita bloqueos con IA lenta
+-            # Usamos un thread con timeout de 25 s (el overlay hace polling cada 4 s)
+-            import queue
+-            q = queue.Queue()
+-            def worker():
+-                try:
+-                    result = advisor.analyze_matchup()
+-                    q.put(("ok", result))
+-                except Exception as e:
+-                    q.put(("error", e))
+-            t = threading.Thread(target=worker, daemon=True)
+-            t.start()
+-            t.join(timeout=25.0)
+-            if t.is_alive():
+-                self._send(504, {"ok": False, "error": "timeout analizando enfrentamiento"})
+-                return
+-            status, payload = q.get()
+-            if status == "ok":
+-                self._send(200, payload)
+-            else:
+-                self._send(500, {"ok": False, "error": f"Error interno: {payload!r}"})
++            code, out = _matchup_guarded()
++            self._send(code, out)
+             return
+         if path == "/api/analyze":
+             try:
+@@ -445,11 +495,21 @@ class Handler(BaseHTTPRequestHandler):
+ _server = None
+ 
+ 
+-def start_server(port):
++def start_server(port, retries=10, delay=0.5):
++    """Abre el servidor. Tras un reinicio el puerto puede tardar un instante en liberarse (el proceso anterior aún
++    cierra): se reintenta unos segundos en vez de arrancar sin servidor y dejar al iPad sin conexión."""
+     global _server
+     ThreadingHTTPServer.daemon_threads = True       # los hilos de cada petición no bloquean el cierre
+     ThreadingHTTPServer.request_queue_size = 64     # varias pantallas (PC + iPad) sin rechazar conexiones
+-    _server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
++    for intento in range(max(1, retries)):
++        try:
++            _server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
++            break
++        except OSError as e:
++            if intento + 1 >= max(1, retries):
++                raise
++            connlog.event("puerto_ocupado", every=2.0, port=port, error=repr(e), intento=intento + 1)
++            time.sleep(delay)
+     thread = threading.Thread(target=_server.serve_forever, daemon=True)
+     thread.start()
+     return _server
+diff --git a/tests/test_overlay_server.py b/tests/test_overlay_server.py
+index 05d938a..fbb6c2a 100644
+--- a/tests/test_overlay_server.py
++++ b/tests/test_overlay_server.py
+@@ -53,17 +53,163 @@ class OverlayServer(unittest.TestCase):
+         code, out = call(self.port, "/api/ping")
+         self.assertEqual((code, out["ok"], out["boot"]), (200, True, connlog.BOOT_ID))
+ 
+-    def test_state_error_is_200_with_error_structure_and_is_logged(self):
++    def test_state_error_degrades_to_valid_200_with_status_and_is_logged(self):
+         def boom():
+             raise RuntimeError("dictionary changed size during iteration")
++        server._state_last = None
+         server.advisor.state = boom
+         code, out = call(self.port, "/api/state")
+-        self.assertEqual(code, 200)
+-        self.assertEqual(out["status"], "error")
+-        self.assertIn("dictionary changed", out["error"])
++        self.assertEqual(code, 200)                                  # el overlay no lo toma por desconexión
++        self.assertIn("status", out)
++        self.assertTrue(out["degraded"])
++        self.assertIn("dictionary changed", out["backend_error"])
++        self.assertNotIn("error", out)                               # validState del cliente rechaza `.error`
+         self.assertIn("[error_state]", log_text())
+-        server.advisor.state = lambda: {"status": "ready"}          # y el servidor sigue vivo
+-        self.assertEqual(call(self.port, "/api/state"), (200, {"status": "ready"}))
++        server.advisor.state = lambda: {"status": "ready", "champ": "Ahri"}
++        self.assertEqual(call(self.port, "/api/state"), (200, {"status": "ready", "champ": "Ahri"}))
++        server.advisor.state = boom                                  # y si vuelve a fallar: lo último bueno, marcado
++        code, out = call(self.port, "/api/state")
++        self.assertEqual((code, out["status"], out["champ"], out["degraded"]), (200, "ready", "Ahri", True))
++
++    def test_state_without_status_is_never_served(self):
++        server._state_last = None
++        server.advisor.state = lambda: {"foo": 1}
++        code, out = call(self.port, "/api/state")
++        self.assertEqual(code, 200)
++        self.assertIn("status", out)
++        self.assertTrue(out["degraded"])
++
++    def test_matchup_slow_ai_answers_within_deadline_and_does_not_pile_up(self):
++        import threading
++        calls = []
++        gate = threading.Event()
++
++        def slow(*a, **k):
++            calls.append(1)
++            gate.wait(10)
++            return {"ok": True, "rows": []}
++        orig, old_dl = server.advisor.analyze_matchup, server.MATCHUP_DEADLINE
++        server.advisor.analyze_matchup = slow
++        server.MATCHUP_DEADLINE = 0.5
++        server._mu_flight = None
++        try:
++            t0 = time.time()
++            res = []
++            ts = [threading.Thread(target=lambda: res.append(call(self.port, "/api/matchup", {}))) for _ in range(5)]
++            [t.start() for t in ts]; [t.join(5) for t in ts]
++            self.assertLess(time.time() - t0, 3.0)
++            self.assertEqual({c for c, _ in res}, {504})
++            self.assertTrue(all(o["pending"] and not o["ok"] for _, o in res))
++            self.assertEqual(len(calls), 1)                          # las 5 comparten UN cálculo
++            gate.set()
++            time.sleep(0.2)
++            self.assertEqual(call(self.port, "/api/matchup", {})[0], 200)   # y cuando termina, responde normal
++        finally:
++            gate.set()
++            server.advisor.analyze_matchup, server.MATCHUP_DEADLINE = orig, old_dl
++            server._mu_flight = None
++
++    def test_matchup_internal_error_is_json_500(self):
++        def boom(*a, **k):
++            raise RuntimeError("x")
++        orig = server.advisor.analyze_matchup
++        server.advisor.analyze_matchup = boom
++        server._mu_flight = None
++        try:
++            code, out = call(self.port, "/api/matchup", {})
++            self.assertEqual((code, out["ok"]), (500, False))
++        finally:
++            server.advisor.analyze_matchup = orig
++            server._mu_flight = None
++
++    def test_static_path_prefix_traversal_is_forbidden(self):
++        from backend import config
++        sib = os.path.normpath(config.UI_DIR) + "_secret"
++        os.makedirs(sib, exist_ok=True)
++        open(os.path.join(sib, "x.txt"), "w").write("secreto")
++        try:
++            code, _ = call(self.port, "/static/../" + os.path.basename(sib) + "/x.txt")
++            self.assertIn(code, (403, 404))
++            s = socket.create_connection(("127.0.0.1", self.port))
++            s.sendall(("GET /static/../%s/x.txt HTTP/1.1\r\nHost: x\r\n\r\n" % os.path.basename(sib)).encode())
++            data = b""
++            while True:
++                c = s.recv(4096)
++                if not c: break
++                data += c
++            self.assertNotIn(b"secreto", data)
++        finally:
++            os.remove(os.path.join(sib, "x.txt")); os.rmdir(sib)
++
++    def test_remote_cannot_change_exec_settings_but_ipad_can_use_the_rest(self):
++        saved = {}
++        orig = server.config.save_settings
++        server.config.save_settings = lambda u: saved.update(u) or dict(saved)
++        server.Handler._is_remote = lambda self: True
++        try:
++            code, out = call(self.port, "/api/settings", {"update_repo": "evil/repo", "auto_update": True})
++            self.assertEqual(code, 403)
++            self.assertEqual(saved, {})
++            for legit in ({"role": "5"}, {"mode": "aram"}, {"lane_view": True}, {"appearance": {"a": 1}}, {"low_gold": False}):
++                self.assertEqual(call(self.port, "/api/settings", legit)[0], 200, legit)
++            self.assertIn("[ajustes_bloqueados]", log_text())
++        finally:
++            server.config.save_settings = orig
++            del server.Handler._is_remote
++
++    def test_remote_ipad_gets_state_overlay_ping_and_clientlog(self):
++        # El iPad directo (no por el puente) llega como IP remota: lo imprescindible debe funcionar.
++        server.Handler._is_remote = lambda self: True
++        server.advisor.state = lambda: {"status": "ready"}
++        try:
++            self.assertEqual(call(self.port, "/api/state"), (200, {"status": "ready"}))
++            self.assertEqual(call(self.port, "/api/ping")[0], 200)
++            self.assertEqual(call(self.port, "/api/clientlog", {"events": [{"kind": "k"}]})[0], 200)
++            self.assertEqual(call(self.port, "/api/ai/config")[0], 403)          # y la clave sigue protegida
++        finally:
++            del server.Handler._is_remote
++
++    def test_restart_same_port_and_clients_recover(self):
++        s1 = server.start_server(0)
++        port = s1.server_address[1]
++        self.assertEqual(call(port, "/api/ping")[0], 200)
++        s1.shutdown(); s1.server_close()
++        with self.assertRaises(OSError):
++            call(port, "/api/ping", timeout=1)
++        s2 = server.start_server(port)                                  # mismo puerto, tras reiniciar
++        try:
++            self.assertEqual(call(port, "/api/ping")[0], 200)
++        finally:
++            s2.shutdown(); s2.server_close()
++
++    def test_start_server_retries_while_port_is_busy(self):
++        import threading
++        hold = socket.socket(); hold.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++        hold.bind(("0.0.0.0", 0)); hold.listen(1)
++        port = hold.getsockname()[1]
++        threading.Timer(0.6, hold.close).start()
++        t0 = time.time()
++        s = server.start_server(port, retries=20, delay=0.2)
++        try:
++            self.assertGreaterEqual(time.time() - t0, 0.4)
++            self.assertEqual(call(port, "/api/ping")[0], 200)
++        finally:
++            s.shutdown(); s.server_close()
++
++    def test_concurrent_settings_and_state_stay_consistent(self):
++        import threading
++        from backend import recommend
++        adv = recommend.advisor
++        errs = []
++
++        def hammer(fn):
++            for _ in range(60):
++                try: fn()
++                except Exception as e: errs.append(repr(e))
++        ts = [threading.Thread(target=hammer, args=(lambda: adv.update(None, None, False),)) for _ in range(3)]
++        ts += [threading.Thread(target=hammer, args=(adv.refresh,)) for _ in range(3)]
++        [t.start() for t in ts]; [t.join(20) for t in ts]
++        self.assertEqual(errs, [])
+ 
+     def test_clientlog_accepts_events_and_sanitizes(self):
+         code, out = call(self.port, "/api/clientlog", {"ua": "Safari/iPad", "page": "/overlay", "events": [
+diff --git a/ui/app.js b/ui/app.js
+index 9dc4d6d..1c784da 100644
+--- a/ui/app.js
++++ b/ui/app.js
+@@ -2105,11 +2105,16 @@ let pollFails = 0;
+ const validState = (j) => !!j && typeof j === "object" && !Array.isArray(j) && !j.error && j.status !== undefined;
+ const connLog = BunnyConn.createLogger();
+ 
++let lastBackendErr = "";
+ function onStateOk(j) {
+   state = j;
+   pollFails = 0;
+   lastPollOk = Date.now();
+   document.body.classList.remove("offline");
++  if (j.backend_error) {                           // el motor respondió pero falló por dentro: se avisa en vez de callar
++    if (j.backend_error !== lastBackendErr) { lastBackendErr = j.backend_error; connLog.log("backend_error", { error: j.backend_error }); }
++  } else lastBackendErr = "";
++  document.body.classList.toggle("backend-err", !!j.backend_error);
+   if (window.Shell) Shell.setConn(true);
+   render(state);                                  // si el render falla, el poller lo registra pero no lo cuenta como desconexión
+ }
+diff --git a/ui/shell.css b/ui/shell.css
+index d503ea5..9561d07 100644
+--- a/ui/shell.css
++++ b/ui/shell.css
+@@ -186,3 +186,4 @@ body.shell .settings-card { max-height: 90vh; }
+ @media (max-width: 480px) { .sh-brand div { display: none; } }
+ 
+ body.offline #shellTop::after { content: 'Reconectando…'; position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); padding: 3px 12px; border-radius: 999px; background: #ffab4a; color: #1a1205; font-size: 12px; font-weight: 700; }
++body.backend-err:not(.offline) #shellTop::after { content: 'Motor con error; mostrando lo último'; position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); padding: 3px 12px; border-radius: 999px; background: #ff6b6b; color: #240808; font-size: 12px; font-weight: 700; }
+-- 
+2.43.0
+

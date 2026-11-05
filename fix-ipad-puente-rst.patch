@@ -1,0 +1,243 @@
+From f0a44ecc0fe4a9e29bd1ea6a9a185b099d8c86ba Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 17:15:18 -0500
+Subject: [PATCH] Puente iPad: rechazos y cierres sin RST (cierre limpio)
+
+Al rechazar por limite de conexiones y al cerrar con la app caida, el puente
+hacia close() con la peticion del cliente aun sin leer. En ese caso el sistema
+responde con RST y el cliente ve un error de conexion: en Linux
+ConnectionResetError (295 de 300 rechazos medidos) y en Windows tambien
+ConnectionAbortedError (WinError 10053), que provoco el fallo de
+test_connection_limit_rejects_extra_but_keeps_serving.
+
+- close_gracefully(): envia FIN, descarta lo que el cliente ya habia enviado
+  (como maximo CLOSE_DRAIN=0.25 s o 64 KB, y sale en cuanto el cliente cierra)
+  y cierra. Se usa en el rechazo por limite y en el cierre con la app caida.
+- El limite de conexiones no cambia: los rechazos siguen sin contar como
+  activos. CONNECT_TIMEOUT sigue en 1.5 s.
+- Pruebas nuevas con cliente estricto (sin tolerar resets): rechazo limpio,
+  rafaga de 30 contra el limite y cierre limpio con la app caida.
+- herramientas/ipad_bridge.py sigue siendo copia exacta.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019oCvi7YPU4WhvzDkTL3fQW
+---
+ herramientas/ipad_bridge.py | 36 ++++++++++++++++++++++-
+ ipad_bridge.py              | 36 ++++++++++++++++++++++-
+ tests/test_ipad_bridge.py   | 57 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 127 insertions(+), 2 deletions(-)
+
+diff --git a/herramientas/ipad_bridge.py b/herramientas/ipad_bridge.py
+index ea26437..2d230b3 100644
+--- a/herramientas/ipad_bridge.py
++++ b/herramientas/ipad_bridge.py
+@@ -26,6 +26,7 @@ CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC
+                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
+                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
+ MAX_CONNECTIONS = 200
++CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
+ SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
+ 
+ 
+@@ -83,6 +84,38 @@ def tune(sock, idle=IDLE_TIMEOUT):
+         pass
+ 
+ 
++def close_gracefully(sock, wait=CLOSE_DRAIN, limit=65536):
++    """Cierra hacia el cliente sin RST: envía FIN y descarta lo que el cliente ya había enviado.
++
++    Cerrar un socket que aún tiene datos sin leer (la petición del iPad) hace que el sistema responda con RST;
++    el cliente ve entonces un error de conexión (en Windows WinError 10053/10054) en vez de un cierre normal.
++    Acotado: sale en cuanto el cliente cierra su lado, a los `wait` s, o tras descartar `limit` bytes.
++    """
++    try:
++        sock.shutdown(socket.SHUT_WR)
++    except OSError:
++        pass
++    end = time.time() + wait
++    got = 0
++    try:
++        while got < limit:
++            left = end - time.time()
++            if left <= 0:
++                break
++            sock.settimeout(left)
++            data = sock.recv(4096)
++            if not data:
++                break
++            got += len(data)
++    except OSError:                      # el cliente ya se fue o no dijo nada: da igual, se cierra igualmente
++        pass
++    finally:
++        try:
++            sock.close()
++        except OSError:
++            pass
++
++
+ class Bridge:
+     def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
+                  max_conn=MAX_CONNECTIONS, logger=None, connect_timeout=CONNECT_TIMEOUT):
+@@ -154,7 +187,7 @@ class Bridge:
+                 full = False
+         if full:
+             self._warn("limite", "demasiadas conexiones (%d): se rechaza %s" % (self.max_conn, addr[0]))
+-            client.close()
++            close_gracefully(client)         # cierre limpio: el rechazo no cuenta como conexión activa
+             return
+         app = None
+         try:
+@@ -165,6 +198,7 @@ class Bridge:
+                 if self._app_down_since is None:
+                     self._app_down_since = time.time()
+                 self._warn("app_caida", "la app no responde en 127.0.0.1:%d (%s); el iPad reintentará" % (self.port_app, type(e).__name__))
++                close_gracefully(client)
+                 return
+             if self._app_down_since is not None:
+                 self.log.info("[app_recuperada] la app vuelve a responder tras %d s", time.time() - self._app_down_since)
+diff --git a/ipad_bridge.py b/ipad_bridge.py
+index ea26437..2d230b3 100644
+--- a/ipad_bridge.py
++++ b/ipad_bridge.py
+@@ -26,6 +26,7 @@ CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC
+                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
+                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
+ MAX_CONNECTIONS = 200
++CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
+ SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
+ 
+ 
+@@ -83,6 +84,38 @@ def tune(sock, idle=IDLE_TIMEOUT):
+         pass
+ 
+ 
++def close_gracefully(sock, wait=CLOSE_DRAIN, limit=65536):
++    """Cierra hacia el cliente sin RST: envía FIN y descarta lo que el cliente ya había enviado.
++
++    Cerrar un socket que aún tiene datos sin leer (la petición del iPad) hace que el sistema responda con RST;
++    el cliente ve entonces un error de conexión (en Windows WinError 10053/10054) en vez de un cierre normal.
++    Acotado: sale en cuanto el cliente cierra su lado, a los `wait` s, o tras descartar `limit` bytes.
++    """
++    try:
++        sock.shutdown(socket.SHUT_WR)
++    except OSError:
++        pass
++    end = time.time() + wait
++    got = 0
++    try:
++        while got < limit:
++            left = end - time.time()
++            if left <= 0:
++                break
++            sock.settimeout(left)
++            data = sock.recv(4096)
++            if not data:
++                break
++            got += len(data)
++    except OSError:                      # el cliente ya se fue o no dijo nada: da igual, se cierra igualmente
++        pass
++    finally:
++        try:
++            sock.close()
++        except OSError:
++            pass
++
++
+ class Bridge:
+     def __init__(self, port_app=8765, port_bridge=8766, host="0.0.0.0", idle=IDLE_TIMEOUT,
+                  max_conn=MAX_CONNECTIONS, logger=None, connect_timeout=CONNECT_TIMEOUT):
+@@ -154,7 +187,7 @@ class Bridge:
+                 full = False
+         if full:
+             self._warn("limite", "demasiadas conexiones (%d): se rechaza %s" % (self.max_conn, addr[0]))
+-            client.close()
++            close_gracefully(client)         # cierre limpio: el rechazo no cuenta como conexión activa
+             return
+         app = None
+         try:
+@@ -165,6 +198,7 @@ class Bridge:
+                 if self._app_down_since is None:
+                     self._app_down_since = time.time()
+                 self._warn("app_caida", "la app no responde en 127.0.0.1:%d (%s); el iPad reintentará" % (self.port_app, type(e).__name__))
++                close_gracefully(client)
+                 return
+             if self._app_down_since is not None:
+                 self.log.info("[app_recuperada] la app vuelve a responder tras %d s", time.time() - self._app_down_since)
+diff --git a/tests/test_ipad_bridge.py b/tests/test_ipad_bridge.py
+index e0fa68a..73c6fd4 100644
+--- a/tests/test_ipad_bridge.py
++++ b/tests/test_ipad_bridge.py
+@@ -54,6 +54,21 @@ def get(port, timeout=3):
+         s.close()
+ 
+ 
++def get_strict(port, timeout=3):
++    """Como get(), pero SIN tolerar resets: si el puente cierra con RST (WinError 10053/10054), la prueba falla."""
++    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
++    try:
++        s.sendall(b"GET /api/state HTTP/1.1\r\nHost: x\r\n\r\n")
++        out = b""
++        while True:
++            chunk = s.recv(4096)
++            if not chunk:
++                return out
++            out += chunk
++    finally:
++        s.close()
++
++
+ def wait(cond, t=5.0):
+     end = time.time() + t
+     while time.time() < end:
+@@ -146,6 +161,48 @@ class BridgeTests(unittest.TestCase):
+         self.assertTrue(wait(lambda: b.stats["active"] == 0, 5.0))
+         self.assertIn(b"ready", get(b.port_bridge))                # y al liberarse vuelve a atender
+ 
++    def test_rejection_is_a_clean_close_not_a_reset(self):
++        # Cerrar con la petición del cliente sin leer provoca RST (en Windows: ConnectionAbortedError/ConnectionResetError).
++        b = self.bridge(max_conn=2, idle=3.0)
++        mutes = [socket.create_connection(("127.0.0.1", b.port_bridge)) for _ in range(2)]
++        self.assertTrue(wait(lambda: b.stats["active"] == 2))
++        for _ in range(25):
++            self.assertEqual(get_strict(b.port_bridge), b"")       # EOF limpio, sin excepciones
++        self.assertEqual(b.stats["rejected"], 25)
++        self.assertEqual(b.stats["active"], 2)                     # el límite sigue intacto
++        for m in mutes:
++            m.close()
++
++    def test_limit_holds_under_burst_and_rejects_cleanly(self):
++        b = self.bridge(max_conn=2, idle=3.0)
++        mutes = [socket.create_connection(("127.0.0.1", b.port_bridge)) for _ in range(2)]
++        self.assertTrue(wait(lambda: b.stats["active"] == 2))
++        outs, errs = [], []
++
++        def intento():
++            try:
++                outs.append(get_strict(b.port_bridge))
++            except OSError as e:
++                errs.append(repr(e))
++
++        ts = [threading.Thread(target=intento) for _ in range(30)]
++        [t.start() for t in ts]; [t.join(10) for t in ts]
++        self.assertEqual(errs, [])
++        self.assertEqual(outs, [b""] * 30)
++        self.assertEqual(b.stats["rejected"], 30)
++        self.assertEqual(b.stats["active"], 2)                     # ninguna conexión de más entró
++        for m in mutes:
++            m.close()
++        self.assertTrue(wait(lambda: b.stats["active"] == 0, 5.0))
++        self.assertIn(b"ready", get(b.port_bridge))                # y al liberarse vuelve a atender
++
++    def test_app_down_closes_cleanly_not_with_reset(self):
++        b = self.bridge()
++        stop_app(self.app)
++        for _ in range(3):
++            self.assertEqual(get_strict(b.port_bridge), b"")
++        self.assertGreaterEqual(b.stats["app_unreachable"], 3)
++
+     def test_accept_errors_reopen_listener_and_keep_working(self):
+         b = self.bridge()
+         real = b._srv
+-- 
+2.43.0
+

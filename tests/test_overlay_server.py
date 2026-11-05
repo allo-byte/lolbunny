@@ -217,20 +217,38 @@ class OverlayServer(unittest.TestCase):
 
     def test_ipad_through_real_bridge_can_use_overlay_but_not_admin(self):
         import ipad_bridge
-        b = ipad_bridge.Bridge(self.port, 0, host="127.0.0.1").start()
+        # El puente exige autenticacion: se obtiene el token del servidor y se envia en cada peticion.
+        code, tok = call(self.port, "/api/bridge/token")
+        self.assertEqual(code, 200)
+        token = tok["token"]
+        self.assertTrue(token, "el servidor debe entregar un token no vacio")
+        print("[DBG bridge] token=%r port=%s" % (token, self.port), flush=True)
+
+        def call_bridge(path, body=None):
+            data = None if body is None else json.dumps(body).encode()
+            req = urllib.request.Request("http://127.0.0.1:%d%s" % (bp, path), data=data,
+                                         method="POST" if data is not None else "GET",
+                                         headers={"Content-Type": "application/json", "X-Bridge-Token": token})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return r.status, json.loads(r.read().decode())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read().decode() or "{}")
+
+        b = ipad_bridge.Bridge(self.port, 0, host="127.0.0.1", bridge_token=token).start()
         try:
             bp = b.port_bridge
             server.advisor.state = lambda: {"status": "ready"}
-            self.assertEqual(call(bp, "/api/state"), (200, {"status": "ready"}))
-            self.assertEqual(call(bp, "/api/ping")[0], 200)
-            self.assertEqual(call(bp, "/api/clientlog", {"events": [{"kind": "k"}]})[0], 200)
-            self.assertEqual(call(bp, "/api/ai/config")[0], 403)
-            self.assertEqual(call(bp, "/api/settings", {"update_repo": "x/y"})[0], 403)
-            self.assertEqual(call(bp, "/api/quit", {})[0], 403)                 # el iPad no cierra la app
+            self.assertEqual(call_bridge("/api/state"), (200, {"status": "ready"}))
+            self.assertEqual(call_bridge("/api/ping")[0], 200)
+            self.assertEqual(call_bridge("/api/clientlog", {"events": [{"kind": "k"}]})[0], 200)
+            self.assertEqual(call_bridge("/api/ai/config")[0], 403)
+            self.assertEqual(call_bridge("/api/settings", {"update_repo": "x/y"})[0], 403)
+            self.assertEqual(call_bridge("/api/quit", {})[0], 403)                 # el iPad no cierra la app
             orig = server.config.save_settings
             server.config.save_settings = lambda u: dict(u)
             try:
-                self.assertEqual(call(bp, "/api/settings", {"role": "5"})[0], 200)   # pero sí cambia su rol/vista
+                self.assertEqual(call_bridge("/api/settings", {"role": "5"})[0], 200)   # pero sí cambia su rol/vista
             finally:
                 server.config.save_settings = orig
         finally:

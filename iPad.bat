@@ -56,6 +56,23 @@ echo  Iniciando puente para iPad...
 set "BRIDGE_TOKEN="
 for /f "delims=" %%t in ('powershell -NoProfile -Command "try{(Invoke-WebRequest http://127.0.0.1:%PORT%/api/bridge/token -UseBasicParsing -TimeoutSec 5).Content | ConvertFrom-Json | Select-Object -ExpandProperty token}catch{} 2>$null"') do set "BRIDGE_TOKEN=%%t"
 
+if not defined BRIDGE_TOKEN (
+  cls
+  echo ============================================================
+  echo    ERROR: NO SE PUDO OBTENER EL TOKEN DEL PUENTE
+  echo ============================================================
+  echo.
+  echo  No se pudo obtener el token de autenticación del servidor en
+  echo  http://127.0.0.1:%PORT%/api/bridge/token.
+  echo  Asegúrate de que el programa (app.py) está abierto y responde.
+  echo  El puente iPad NO se iniciará sin un token válido.
+  echo.
+  echo  Prueba a ejecutar a mano:  python app.py
+  echo.
+  pause
+  exit /b
+)
+
 start "ipad-bridge" python herramientas\ipad_bridge.py %PORT% %BRIDGE_PORT% "!BRIDGE_TOKEN!"
 
 if not "%UP%"=="200" (

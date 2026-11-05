@@ -1,0 +1,166 @@
+From 354f4a1f3271a5d8e87b668e76edd327f2fd37d3 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Wed, 4 Nov 2026 08:11:04 -0500
+Subject: [PATCH] Puente: el respaldo 127.0.0.1 comparte el tiempo de conexion
+ (Windows tardaba el doble con la app caida)
+
+En Windows rechazar un puerto cerrado tarda ~2 s: el intento desde 127.0.0.2 y el
+de respaldo gastaban 1.5 s cada uno (3 s) y fallaban 3 pruebas. Ahora se reparte
+connect_timeout entre ambos hasta comprobar 127.0.0.2, y despues solo se usa ese.
+Prueba de busy-port: el socket que ocupa el puerto ya no usa SO_REUSEADDR (en
+Windows permite enlazar dos sockets al mismo puerto).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ herramientas/ipad_bridge.py  | 23 ++++++++++++++---------
+ ipad_bridge.py               | 23 ++++++++++++++---------
+ tests/test_ipad_bridge.py    | 18 ++++++++++++++++++
+ tests/test_overlay_server.py |  2 +-
+ 4 files changed, 47 insertions(+), 19 deletions(-)
+
+diff --git a/herramientas/ipad_bridge.py b/herramientas/ipad_bridge.py
+index e4c08c3..3b2d562 100644
+--- a/herramientas/ipad_bridge.py
++++ b/herramientas/ipad_bridge.py
+@@ -156,31 +156,36 @@ class Bridge:
+         return srv
+ 
+     def _connect_app(self):
+-        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout.
++        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout EN TOTAL.
+ 
+         Sale desde 127.0.0.2 (no desde 127.0.0.1): así la app ve al iPad como un cliente REMOTO y le aplica las
+         mismas protecciones que a cualquier aparato de la red (no puede cerrar la app ni cambiar claves de IA).
+-        Si el sistema no deja usar esa dirección y aún no ha funcionado nunca, se usa la normal (y se avisa)."""
+-        if self._src_ok is not False:
++        Mientras no se haya comprobado que 127.0.0.2 funciona, el presupuesto de tiempo se reparte entre ese intento
++        y el de respaldo con 127.0.0.1 (en Windows rechazar un puerto cerrado tarda ~2 s: dos intentos completos
++        dejarían al iPad esperando el doble). Una vez comprobado, solo se usa 127.0.0.2 con el tiempo entero."""
++        if self._src_ok:
++            return self._dial(RELAY_SOURCE, self.connect_timeout)
++        end = time.time() + self.connect_timeout
++        if self._src_ok is None:
+             try:
+-                s = self._dial(RELAY_SOURCE)
++                s = self._dial(RELAY_SOURCE, self.connect_timeout / 2)
+                 self._src_ok = True
+                 return s
+             except OSError:
+-                if self._src_ok:                       # ya funcionó antes: es que la app está caída, no la dirección
+-                    raise
+-        s = self._dial(None)
++                pass
++        left = max(0.2, end - time.time())
++        s = self._dial(None, left)               # respaldo; si la app está caída, esto también falla y se cierra al iPad
+         if self._src_ok is None:
+             self._src_ok = False
+             self._warn("origen", "no se pudo usar %s como origen: la app verá al iPad como local" % RELAY_SOURCE, every=3600.0)
+         return s
+ 
+-    def _dial(self, source):
++    def _dial(self, source, timeout):
+         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+         try:
+             if source:
+                 s.bind((source, 0))
+-            s.settimeout(self.connect_timeout)
++            s.settimeout(timeout)
+             s.connect(("127.0.0.1", self.port_app))
+             return s
+         except BaseException:
+diff --git a/ipad_bridge.py b/ipad_bridge.py
+index e4c08c3..3b2d562 100644
+--- a/ipad_bridge.py
++++ b/ipad_bridge.py
+@@ -156,31 +156,36 @@ class Bridge:
+         return srv
+ 
+     def _connect_app(self):
+-        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout.
++        """Abre la conexión con la app. Con la app caída, el cierre al iPad no tarda más que connect_timeout EN TOTAL.
+ 
+         Sale desde 127.0.0.2 (no desde 127.0.0.1): así la app ve al iPad como un cliente REMOTO y le aplica las
+         mismas protecciones que a cualquier aparato de la red (no puede cerrar la app ni cambiar claves de IA).
+-        Si el sistema no deja usar esa dirección y aún no ha funcionado nunca, se usa la normal (y se avisa)."""
+-        if self._src_ok is not False:
++        Mientras no se haya comprobado que 127.0.0.2 funciona, el presupuesto de tiempo se reparte entre ese intento
++        y el de respaldo con 127.0.0.1 (en Windows rechazar un puerto cerrado tarda ~2 s: dos intentos completos
++        dejarían al iPad esperando el doble). Una vez comprobado, solo se usa 127.0.0.2 con el tiempo entero."""
++        if self._src_ok:
++            return self._dial(RELAY_SOURCE, self.connect_timeout)
++        end = time.time() + self.connect_timeout
++        if self._src_ok is None:
+             try:
+-                s = self._dial(RELAY_SOURCE)
++                s = self._dial(RELAY_SOURCE, self.connect_timeout / 2)
+                 self._src_ok = True
+                 return s
+             except OSError:
+-                if self._src_ok:                       # ya funcionó antes: es que la app está caída, no la dirección
+-                    raise
+-        s = self._dial(None)
++                pass
++        left = max(0.2, end - time.time())
++        s = self._dial(None, left)               # respaldo; si la app está caída, esto también falla y se cierra al iPad
+         if self._src_ok is None:
+             self._src_ok = False
+             self._warn("origen", "no se pudo usar %s como origen: la app verá al iPad como local" % RELAY_SOURCE, every=3600.0)
+         return s
+ 
+-    def _dial(self, source):
++    def _dial(self, source, timeout):
+         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+         try:
+             if source:
+                 s.bind((source, 0))
+-            s.settimeout(self.connect_timeout)
++            s.settimeout(timeout)
+             s.connect(("127.0.0.1", self.port_app))
+             return s
+         except BaseException:
+diff --git a/tests/test_ipad_bridge.py b/tests/test_ipad_bridge.py
+index 846c311..02919cc 100644
+--- a/tests/test_ipad_bridge.py
++++ b/tests/test_ipad_bridge.py
+@@ -134,6 +134,24 @@ class BridgeTests(unittest.TestCase):
+         self.assertGreaterEqual(b.stats["app_unreachable"], 1)
+         self.assertTrue(wait(lambda: b.stats["active"] == 0))
+ 
++    def test_slow_windows_refusal_with_two_source_attempts_stays_within_connect_timeout(self):
++        # Windows tarda ~2 s en rechazar: el intento desde 127.0.0.2 y el de respaldo juntos no deben pasar de connect_timeout.
++        b = self.bridge()
++        stop_app(self.app)
++        calls = []
++
++        def dial(source, timeout):
++            calls.append((source, timeout))
++            time.sleep(min(2.05, timeout))
++            raise socket.timeout("rechazo lento simulado")
++        b._dial = dial
++        t0 = time.time()
++        self.assertEqual(get_strict(b.port_bridge), b"")
++        self.assertLess(time.time() - t0, 2.0)
++        self.assertEqual(len(calls), 2)
++        self.assertLessEqual(sum(c[1] for c in calls), b.connect_timeout + 0.25)
++        self.assertIsNone(b._src_ok)                                     # app caída ≠ 127.0.0.2 inservible
++
+     def test_connect_timeout_to_local_app_is_short(self):
+         # La app corre en este mismo PC: un tope largo solo sirve para dejar al iPad esperando.
+         self.assertLessEqual(ib.CONNECT_TIMEOUT, 1.5)
+diff --git a/tests/test_overlay_server.py b/tests/test_overlay_server.py
+index 0748ff8..5763ccf 100644
+--- a/tests/test_overlay_server.py
++++ b/tests/test_overlay_server.py
+@@ -251,7 +251,7 @@ class OverlayServer(unittest.TestCase):
+ 
+     def test_start_server_retries_while_port_is_busy(self):
+         import threading
+-        hold = socket.socket(); hold.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++        hold = socket.socket()      # sin SO_REUSEADDR: en Windows ese ajuste dejaría enlazar dos sockets al mismo puerto
+         hold.bind(("0.0.0.0", 0)); hold.listen(1)
+         port = hold.getsockname()[1]
+         threading.Timer(0.6, hold.close).start()
+-- 
+2.43.0
+

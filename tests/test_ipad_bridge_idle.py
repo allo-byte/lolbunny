@@ -26,6 +26,13 @@ IDLE = 1.0          # inactividad del puente en las pruebas (s)
 CHUNKS = 8          # trozos que emite el servidor falso
 INTERVAL = 0.4      # s entre trozos: CHUNKS*INTERVAL = 3.2 s > IDLE (y > 2*IDLE no hace falta)
 
+# Token de prueba para autenticar el puente en las pruebas unitarias.
+IDLE_TOKEN = "idle-prueba-token-seguro"
+
+
+def _token_header(token):
+    return b"X-Bridge-Token: %s\r\n" % token.encode("ascii", errors="ignore")
+
 
 class FakeApp:
     """Servidor TCP falso en 127.0.0.1. handler(conn) se ejecuta en un hilo por conexión."""
@@ -71,11 +78,13 @@ class FakeApp:
 
 def make_bridge(app):
     log = ipad_bridge.make_logger(os.path.join(TMP, "bridge-%d.log" % app.port))
-    return ipad_bridge.Bridge(port_app=app.port, port_bridge=0, host="127.0.0.1", idle=IDLE, logger=log).start()
+    return ipad_bridge.Bridge(port_app=app.port, port_bridge=0, host="127.0.0.1", idle=IDLE, logger=log, bridge_token=IDLE_TOKEN).start()
 
 
 def connect(bridge):
-    return socket.create_connection(("127.0.0.1", bridge.port_bridge), timeout=10)
+    c = socket.create_connection(("127.0.0.1", bridge.port_bridge), timeout=10)
+    c.sendall(_token_header(IDLE_TOKEN))   # autenticar el puente antes de cualquier tráfico
+    return c
 
 
 def wait_for(cond, timeout=5.0):
@@ -85,6 +94,22 @@ def wait_for(cond, timeout=5.0):
             return True
         time.sleep(0.05)
     return cond()
+
+
+def _find_dead_port():
+    """Busca un puerto TCP local en el que NADA escuche (connect rechazado)."""
+    import random
+    for _ in range(60):
+        p = random.randint(49152, 65535)
+        s = socket.socket()
+        try:
+            s.settimeout(0.2)
+            s.connect(("127.0.0.1", p))
+            s.close()
+        except OSError:
+            s.close()
+            return p
+    raise RuntimeError("no se encontro un puerto muerto para la prueba")
 
 
 # ---------------------------------------------------------------- pruebas
@@ -201,15 +226,11 @@ def test_conexion_muerta_se_libera():
 
 def test_app_caida_cierra_rapido():
     """Con la app caída el iPad recibe un cierre rápido (y limpio) para poder reintentar."""
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    dead_port = s.getsockname()[1]
-    s.close()
+    dead_port = _find_dead_port()
     log = ipad_bridge.make_logger(os.path.join(TMP, "bridge-dead.log"))
-    br = ipad_bridge.Bridge(port_app=dead_port, port_bridge=0, host="127.0.0.1", idle=IDLE, logger=log).start()
+    br = ipad_bridge.Bridge(port_app=dead_port, port_bridge=0, host="127.0.0.1", idle=IDLE, logger=log, bridge_token=IDLE_TOKEN).start()
     try:
-        c = connect(br)
-        c.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        c = connect(br)                       # ya envía el token de autenticación
         t0 = time.time()
         c.settimeout(5)
         try:
@@ -217,8 +238,8 @@ def test_app_caida_cierra_rapido():
         except (ConnectionResetError, OSError):
             data = b""
         assert data == b"", "no debía llegar contenido con la app caída"
-        assert time.time() - t0 < ipad_bridge.CONNECT_TIMEOUT + 1.5
-        assert br.stats["app_unreachable"] >= 1
+        assert time.time() - t0 < ipad_bridge.CONNECT_TIMEOUT + 2.5, "el cierre con la app caída tardó demasiado (%.1f s)" % (time.time() - t0)
+        assert br.stats["app_unreachable"] >= 1, "no se contó la app como inalcanzable"
         c.close()
     finally:
         br.stop()

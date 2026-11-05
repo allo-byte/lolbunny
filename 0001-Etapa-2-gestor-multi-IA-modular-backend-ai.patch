@@ -1,0 +1,1699 @@
+From 1990b042b041280e0045af834f9a160c448010d3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 3 Nov 2026 03:07:53 -0500
+Subject: [PATCH] Etapa 2: gestor multi-IA modular (backend/ai)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Nuevo paquete backend/ai con un adaptador por proveedor (gratis, gemini,
+deepseek, grok, chatgpt, ollama, openrouter, custom): identidad, estado de
+salud, timeout y validacion propios. ProviderManager decide a quien preguntar:
+rapido = principal + respaldo, completo = consenso (Borda sobre respuestas ya
+validadas contra el catalogo cerrado). Si todos fallan manda el motor.
+
+- aiadvisor.py sigue siendo la fachada: default_transport, active_config y
+  atribucion por proveedor en result.ai; el flujo de un solo proveedor queda
+  intacto cuando el gestor no tiene proveedores habilitados.
+- Claves en el Administrador de credenciales de Windows (keyring, con
+  respaldo en archivo y aviso en el panel); nunca en el JSON de config ni en
+  las respuestas de la API.
+- Rutas nuevas /api/ai/providers (+ /test), solo desde el PC.
+- Panel minimo en «Conectar la IA»; el formulario existente no se toca.
+- El puente Edge se declara como no disponible (etapa 3); no se simula.
+- Migracion desde ~/.bunnylol_ai.json al abrir el panel, no al arrancar.
+- tests/conftest.py aisla las pruebas de claves y config reales.
+
+Pruebas: 223 passed (191 previas + 32 nuevas) y e2e con HTTP real local.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H6yZZKP44ftUxT1nqmZ9iD
+---
+ LEEME_IA.md                |  28 +++
+ backend/LEEME_MAPA.md      |   1 +
+ backend/ai/__init__.py     |  12 ++
+ backend/ai/consensus.py    |  55 ++++++
+ backend/ai/health.py       |  77 ++++++++
+ backend/ai/keystore.py     | 122 ++++++++++++
+ backend/ai/manager.py      | 319 ++++++++++++++++++++++++++++++
+ backend/ai/providers.py    | 153 ++++++++++++++
+ backend/ai_routes.py       |  31 ++-
+ backend/aiadvisor.py       | 111 +++++++++--
+ backend/recommend.py       |   2 +-
+ backend/server.py          |   3 +-
+ requirements.txt           |   3 +-
+ tests/conftest.py          |   7 +
+ tests/test_ai_providers.py | 396 +++++++++++++++++++++++++++++++++++++
+ ui/app.css                 |   8 +
+ ui/app.js                  |  97 +++++++++
+ 17 files changed, 1409 insertions(+), 16 deletions(-)
+ create mode 100644 backend/ai/__init__.py
+ create mode 100644 backend/ai/consensus.py
+ create mode 100644 backend/ai/health.py
+ create mode 100644 backend/ai/keystore.py
+ create mode 100644 backend/ai/manager.py
+ create mode 100644 backend/ai/providers.py
+ create mode 100644 tests/test_ai_providers.py
+
+diff --git a/LEEME_IA.md b/LEEME_IA.md
+index f50e08f..70b46c5 100644
+--- a/LEEME_IA.md
++++ b/LEEME_IA.md
+@@ -56,3 +56,31 @@ Mientras responde aparece «La IA está armando tu build…»; si cambia la part
+   lo adelantado lleva la etiqueta «por oro».
+ - Si el siguiente objeto no alcanza, indica qué componente comprar ya con el oro sobrante.
+ - Muestra oro, g/min, «Compra YA», «Siguiente» (faltante, minutos y minuto de partida) y avisa si te sobra oro parado.
++
++## Varias IA a la vez (gestor multi-IA, `backend/ai/`)
++Panel: Analizar enfrentamiento → «⚙ Conectar la IA» → **Varias IA a la vez**. Cada proveedor se activa con su casilla,
++con su modelo y su clave, y tiene su propio estado (OK / con fallos / caído), tiempo de espera y validación.
++Nada viene activado: sin proveedores marcados todo sigue como antes (IA de un solo proveedor o apagada).
++
++| Proveedor | Método hoy | Notas |
++|---|---|---|
++| Gratis (Pollinations) | API pública sin clave | Sin garantías: puede caerse. |
++| Gemini | API con clave (Google AI Studio) | `https://generativelanguage.googleapis.com/v1beta/openai` |
++| DeepSeek | API con clave | `https://api.deepseek.com` |
++| Grok, ChatGPT | API con clave | La web gratuita de ambos solo será posible por el puente Edge (etapa 3). |
++| Ollama | Local, sin clave | Necesita Ollama abierto. |
++
++- **Estrategia por modo:** rápido = *principal + respaldo* (responde uno; el siguiente solo si falla, tarda o responde algo
++  inválido); completo = *consenso* (varios en paralelo, máx. 3, y se fusionan las respuestas ya validadas).
++  Con un solo proveedor usable, ambos modos equivalen a *principal + respaldo*. Hoy el análisis de enfrentamiento usa el modo completo;
++  el modo rápido se conectará a los activadores de partida en la etapa 4.
++- **Si todos fallan** manda el motor matemático, como siempre.
++- **Atribución:** cada respuesta lleva el proveedor que la produjo (`result.ai.provider/providers/strategy/attempts`); en consenso,
++  `by` indica quién aportó cada objeto. Los contadores por proveedor (llamadas, errores, inválidas, latencia) se acumulan para la etapa 5.
++- **Claves:** Administrador de credenciales de Windows (módulo `keyring`, ya en requirements). Sin keyring quedan en
++  `~/.bunnylol_ai_keys.json` y el panel lo avisa. Nunca se guardan en `~/.bunnylol_providers.json` ni se devuelven por la API.
++- **Migración:** al abrir el panel por primera vez se importa tu IA de un solo proveedor (`~/.bunnylol_ai.json`); si la clave
++  queda a salvo en el Administrador de credenciales, se borra del archivo en claro.
++- **Rutas nuevas** (solo desde el PC): `GET/POST /api/ai/providers`, `POST /api/ai/providers/test`, y `POST /api/ai/test` acepta `{"provider": id}`.
++- **Puente Edge:** declarado pero NO disponible (etapa 3); el panel lo indica y no se simula nada.
++
+diff --git a/backend/LEEME_MAPA.md b/backend/LEEME_MAPA.md
+index d7bad81..e42e845 100644
+--- a/backend/LEEME_MAPA.md
++++ b/backend/LEEME_MAPA.md
+@@ -60,5 +60,6 @@ Este mapa sirve para encontrar rápido dónde mirar.
+ 
+ ## Subcarpetas
+ - `intelligence/`: motor experimental, aislado (ver su README).
++- `ai/`: gestor multi-IA (proveedores, salud, consenso, claves). Ver `LEEME_IA.md`; `aiadvisor.py` sigue siendo la fachada.
+ - `patch_pipeline/`: actualización automática de ratios y pasivas por parche.
+ - `exact_math/`: simulador y base de ratios.
+diff --git a/backend/ai/__init__.py b/backend/ai/__init__.py
+new file mode 100644
+index 0000000..c058b42
+--- /dev/null
++++ b/backend/ai/__init__.py
+@@ -0,0 +1,12 @@
++"""Gestor multi-IA de BunnyLoL (etapa 2).
++
++Módulos:
++  keystore   claves API en el Administrador de credenciales de Windows (con respaldo en archivo)
++  health     estado, tiempos de espera y contadores de cada proveedor
++  providers  catálogo de proveedores y un adaptador por proveedor (identidad, estado, validación)
++  consensus  fusión de varias respuestas validadas, conservando quién aportó qué
++  manager    ProviderManager: configuración, orden, estrategia por modo (rápido/completo)
++
++Se importa de forma perezosa desde backend/aiadvisor.py: si algo falla aquí, el motor matemático
++y la IA de un solo proveedor siguen funcionando como antes.
++"""
+diff --git a/backend/ai/consensus.py b/backend/ai/consensus.py
+new file mode 100644
+index 0000000..be4b12b
+--- /dev/null
++++ b/backend/ai/consensus.py
+@@ -0,0 +1,55 @@
++"""Fusión de varias respuestas ya validadas (mismo esquema que aiadvisor.parse_reply).
++
++Cada respuesta llega validada contra el catálogo cerrado, así que la fusión solo puede combinar ids
++reales; nunca introduce objetos nuevos. Se conserva quién aportó cada decisión (`by`).
++"""
++import json
++
++
++def merge(replies):
++    """replies: [(proveedor, parsed)] en orden de prioridad. Devuelve (dict en el esquema de parse_reply, by)."""
++    n = len(replies)
++    pts, pos, why, voters = {}, {}, {}, {}
++    for prov, p in replies:
++        build = p.get("build") or []
++        for i, it in enumerate(build):
++            iid = it["id"]
++            pts[iid] = pts.get(iid, 0) + (6 - i)                 # Borda: el 1.º vale 6, el 6.º vale 1
++            pos.setdefault(iid, []).append(i)
++            voters.setdefault(iid, []).append(prov)
++            if it.get("why") and (iid not in why or i < why[iid][0]):
++                why[iid] = (i, it["why"])
++    order = sorted(pts, key=lambda k: (-pts[k], sum(pos[k]) / len(pos[k]), k))
++    build = [{"id": k, "why": why.get(k, (0, ""))[1]} for k in order[:6]]
++
++    scores, pwhy = {}, {}
++    for prov, p in replies:
++        for it in p.get("picks") or []:
++            scores.setdefault(it["id"], []).append(it["score"])
++            if it.get("why") and (it["id"] not in pwhy or it["score"] > pwhy[it["id"]][0]):
++                pwhy[it["id"]] = (it["score"], it["why"])
++    mean = {k: sum(v) / len(v) for k, v in scores.items()}
++    picks = [{"id": k, "score": round(mean[k], 1), "why": pwhy.get(k, (0, ""))[1]}
++             for k in sorted(mean, key=lambda k: (-mean[k], k))[:6]]
++
++    votes = {}
++    avoid_why = {}
++    for prov, p in replies:
++        for it in p.get("avoid") or []:
++            votes[it["id"]] = votes.get(it["id"], 0) + 1
++            avoid_why.setdefault(it["id"], it.get("why", ""))
++    strong = {p["id"] for p in picks if p["score"] >= 60}
++    avoid = [{"id": k, "why": avoid_why[k]} for k in sorted(votes, key=lambda k: -votes[k])
++             if votes[k] * 2 > n and k not in strong][:3]          # mayoría estricta
++
++    resumen = next((p.get("resumen") for _, p in replies if p.get("resumen")), "")
++    alert = next((p.get("alert") for _, p in replies if p.get("alert")), "")
++    merged = {"picks": picks, "avoid": avoid, "build": build, "resumen": resumen, "alert": alert}
++    by = {"build": {k: voters[k] for k in order[:6]}, "providers": [prov for prov, _ in replies],
++          "unanimous_build": [k for k in order[:6] if len(voters[k]) == n]}
++    return merged, by
++
++
++def to_text(merged):
++    """Texto JSON que vuelve a pasar por parse_reply (misma validación que una respuesta normal)."""
++    return json.dumps(merged, ensure_ascii=False)
+diff --git a/backend/ai/health.py b/backend/ai/health.py
+new file mode 100644
+index 0000000..c312860
+--- /dev/null
++++ b/backend/ai/health.py
+@@ -0,0 +1,77 @@
++"""Estado de salud de un proveedor: contadores, espera tras fallos y diagnóstico legible.
++
++Los contadores (llamadas, errores, respuestas inválidas, latencia) alimentan la evaluación
++comparativa de proveedores de la etapa 5; aquí solo se acumulan, no se interpretan.
++"""
++import threading
++import time
++
++
++class ProviderHealth:
++    def __init__(self, clock=time.time):
++        self._clock = clock
++        self._lock = threading.Lock()
++        self.calls = 0
++        self.ok = 0
++        self.errors = 0          # fallos de red/API/tiempo
++        self.invalid = 0         # respondió, pero la respuesta no pasó la validación
++        self.timeouts = 0
++        self.fails = 0           # fallos consecutivos
++        self.pause_until = 0.0
++        self.last_error = ""
++        self.last_ms = None
++        self.total_ms = 0
++        self.last_ok_at = None
++
++    def usable(self):
++        return self._clock() >= self.pause_until
++
++    def retry_in(self):
++        return max(0, int(self.pause_until - self._clock() + 0.999))
++
++    def success(self, ms):
++        with self._lock:
++            self.calls += 1
++            self.ok += 1
++            self.fails = 0
++            self.pause_until = 0.0
++            self.last_error = ""
++            self.last_ms = int(ms)
++            self.total_ms += int(ms)
++            self.last_ok_at = self._clock()
++
++    def failure(self, kind, message):
++        """kind: 'error' | 'invalid' | 'timeout'."""
++        with self._lock:
++            self.calls += 1
++            self.fails += 1
++            if kind == "invalid":
++                self.invalid += 1
++            elif kind == "timeout":
++                self.timeouts += 1
++                self.errors += 1
++            else:
++                self.errors += 1
++            self.last_error = str(message)[:200]
++            wait = 60.0 if self.fails >= 5 else min(60.0, 2.0 ** self.fails)
++            self.pause_until = self._clock() + wait
++
++    def reset(self):
++        with self._lock:
++            self.fails = 0
++            self.pause_until = 0.0
++            self.last_error = ""
++
++    def state(self):
++        if self.calls == 0:
++            return "sin_uso"
++        if self.fails == 0:
++            return "ok"
++        return "caido" if self.fails >= 3 else "degradado"
++
++    def snapshot(self):
++        avg = int(self.total_ms / self.ok) if self.ok else None
++        return {"state": self.state(), "calls": self.calls, "ok": self.ok, "errors": self.errors,
++                "invalid": self.invalid, "timeouts": self.timeouts, "fails": self.fails,
++                "last_error": self.last_error, "last_ms": self.last_ms, "avg_ms": avg,
++                "retry_in": 0 if self.usable() else self.retry_in()}
+diff --git a/backend/ai/keystore.py b/backend/ai/keystore.py
+new file mode 100644
+index 0000000..c089335
+--- /dev/null
++++ b/backend/ai/keystore.py
+@@ -0,0 +1,122 @@
++"""Almacén de claves API.
++
++Orden de preferencia (modo "auto"):
++  1. keyring -> Administrador de credenciales de Windows (la clave no queda en un archivo legible).
++  2. archivo local ~/.bunnylol_ai_keys.json, solo si keyring no está instalado o falla.
++     En Windows el permiso 0600 no protege: por eso status() informa de `secure: False`.
++BUNNYLOL_KEYSTORE=memory|file|keyring|auto  (memory se usa en las pruebas: no toca el equipo real).
++"""
++import json
++import os
++import threading
++
++SERVICE = "bunnylol-ai"
++
++
++def _keys_file():
++    return os.environ.get("BUNNYLOL_KEYS_FILE") or os.path.join(os.path.expanduser("~"), ".bunnylol_ai_keys.json")
++
++
++class KeyStore:
++    def __init__(self, mode=None):
++        self.mode = (mode or os.environ.get("BUNNYLOL_KEYSTORE") or "auto").lower()
++        self._mem = {}
++        self._lock = threading.Lock()
++        self._kr = None
++        self.error = ""
++        self.backend = self._pick()
++
++    def _pick(self):
++        if self.mode == "memory":
++            return "memory"
++        if self.mode == "file":
++            return "file"
++        try:
++            import keyring
++            from keyring.backends import fail
++            if isinstance(keyring.get_keyring(), fail.Keyring):
++                raise RuntimeError("sin backend de credenciales")
++            self._kr = keyring
++            return "keyring"
++        except Exception as e:
++            self.error = "keyring no disponible (%s): se usa archivo local" % type(e).__name__
++            return "file"
++
++    @property
++    def secure(self):
++        return self.backend == "keyring"
++
++    # ---- archivo de respaldo
++    def _file_read(self):
++        try:
++            with open(_keys_file(), encoding="utf-8") as f:
++                d = json.load(f)
++            return d if isinstance(d, dict) else {}
++        except Exception:
++            return {}
++
++    def _file_write(self, data):
++        path = _keys_file()
++        tmp = path + ".tmp"
++        with open(tmp, "w", encoding="utf-8") as f:
++            json.dump(data, f)
++        os.replace(tmp, path)
++        try:
++            os.chmod(path, 0o600)
++        except Exception:
++            pass
++
++    # ---- API
++    def get(self, pid):
++        with self._lock:
++            if self.backend == "memory":
++                return self._mem.get(pid, "")
++            if self.backend == "keyring":
++                try:
++                    v = self._kr.get_password(SERVICE, pid)
++                    if v:
++                        return v
++                except Exception as e:
++                    self.error = "keyring: %s" % type(e).__name__
++            return str(self._file_read().get(pid, "") or "")
++
++    def set(self, pid, key):
++        key = str(key or "").strip()
++        if not key:
++            return False
++        with self._lock:
++            if self.backend == "memory":
++                self._mem[pid] = key
++                return True
++            if self.backend == "keyring":
++                try:
++                    self._kr.set_password(SERVICE, pid, key)
++                    if self._kr.get_password(SERVICE, pid) == key:      # comprobar que de verdad se guardó
++                        return True
++                except Exception as e:
++                    self.error = "keyring: %s; clave guardada en archivo local" % type(e).__name__
++            data = self._file_read()
++            data[pid] = key
++            self._file_write(data)
++            return True
++
++    def delete(self, pid):
++        with self._lock:
++            self._mem.pop(pid, None)
++            if self.backend == "keyring":
++                try:
++                    self._kr.delete_password(SERVICE, pid)
++                except Exception:
++                    pass
++            data = self._file_read()
++            if pid in data:
++                data.pop(pid)
++                self._file_write(data)
++
++    @staticmethod
++    def hint(key):
++        key = str(key or "")
++        return ("…" + key[-4:]) if len(key) >= 8 else ""
++
++    def describe(self):
++        return {"backend": self.backend, "secure": self.secure, "error": self.error}
+diff --git a/backend/ai/manager.py b/backend/ai/manager.py
+new file mode 100644
+index 0000000..77f7858
+--- /dev/null
++++ b/backend/ai/manager.py
+@@ -0,0 +1,319 @@
++"""ProviderManager: qué proveedores hay, en qué orden y con qué estrategia se consultan.
++
++Estrategias (por nivel de análisis):
++  failover   responde el primero que funcione; el siguiente solo si falla, tarda o responde algo inválido.
++  consensus  se pregunta a varios en paralelo (máx. `max_consensus`) y se fusionan las respuestas validadas.
++Por defecto: rápido = failover, completo = consensus (con un solo proveedor usable equivale a failover).
++
++Configuración en ~/.bunnylol_providers.json (BUNNYLOL_PROVIDERS_FILE). Las claves NO van ahí: viven en
++el KeyStore. Nada está activado por defecto: sin proveedores habilitados la IA queda apagada, como antes.
++"""
++import json
++import os
++import threading
++import time
++
++from .. import aiadvisor
++from . import consensus
++from .keystore import KeyStore
++from .providers import DEFAULT_ORDER, SPECS, ProviderAdapter, Reply, canonical
++
++STRATEGIES = ("failover", "consensus")
++LEVELS = ("fast", "full")
++
++
++def _default_path():
++    return os.environ.get("BUNNYLOL_PROVIDERS_FILE") or os.path.join(os.path.expanduser("~"), ".bunnylol_providers.json")
++
++
++def _defaults():
++    return {"version": 1, "order": list(DEFAULT_ORDER), "providers": {},
++            "strategy": {"fast": "failover", "full": "consensus"},
++            "max_consensus": 3, "fast_timeout": 20.0, "weight": 0.35, "min_interval": 2.0, "updated": 0}
++
++
++class ProviderManager:
++    def __init__(self, path=None, keystore=None, transport=None, clock=time.time):
++        self.path = path or _default_path()
++        self.keystore = keystore or KeyStore()
++        self._tx = transport
++        self._clock = clock
++        self._lock = threading.RLock()
++        self._conf = None
++        self._mtime = None
++        self._adapters = {}
++
++    # ------------------------------------------------------------------ configuración
++    def load(self):
++        with self._lock:
++            try:
++                mt = os.path.getmtime(self.path)
++            except OSError:
++                mt = None
++            if self._conf is not None and mt == self._mtime:
++                return self._conf
++            conf = _defaults()
++            if mt is not None:
++                try:
++                    with open(self.path, encoding="utf-8") as f:
++                        d = json.load(f)
++                    if isinstance(d, dict):
++                        for k in ("strategy",):
++                            if isinstance(d.get(k), dict):
++                                conf[k].update({a: b for a, b in d[k].items() if b in STRATEGIES and a in LEVELS})
++                        if isinstance(d.get("providers"), dict):
++                            conf["providers"] = {canonical(k): v for k, v in d["providers"].items()
++                                                 if canonical(k) in SPECS and isinstance(v, dict)}
++                        if isinstance(d.get("order"), list):
++                            conf["order"] = self._clean_order(d["order"])
++                        for k, cast in (("max_consensus", int), ("fast_timeout", float), ("weight", float),
++                                        ("min_interval", float), ("updated", float)):
++                            if k in d:
++                                try:
++                                    conf[k] = cast(d[k])
++                                except Exception:
++                                    pass
++                except Exception:
++                    pass                                   # archivo roto: se usan los valores por defecto
++            conf["weight"] = min(0.6, max(0.0, conf["weight"]))
++            conf["max_consensus"] = max(1, min(4, conf["max_consensus"]))
++            self._conf, self._mtime = conf, mt
++            return conf
++
++    @staticmethod
++    def _clean_order(order):
++        seen, out = set(), []
++        for p in list(order) + DEFAULT_ORDER:
++            p = canonical(p)
++            if p in SPECS and p not in seen:
++                seen.add(p)
++                out.append(p)
++        return out
++
++    def _save(self, conf):
++        conf = dict(conf)
++        conf["updated"] = self._clock()
++        tmp = self.path + ".tmp"
++        with open(tmp, "w", encoding="utf-8") as f:
++            json.dump(conf, f, ensure_ascii=False, indent=2)
++        os.replace(tmp, self.path)
++        self._conf, self._mtime = None, None               # fuerza releer (y refresca ajustes de los adaptadores)
++
++    def _adapter(self, pid):
++        conf = self.load()
++        ad = self._adapters.get(pid)
++        if ad is None:
++            ad = self._adapters[pid] = ProviderAdapter(pid, self.keystore, transport=self._tx, clock=self._clock)
++        ad.settings = conf["providers"].get(pid, {})       # ajustes al día; la salud del adaptador se conserva
++        return ad
++
++    def adapters(self):
++        return [self._adapter(p) for p in self.load()["order"]]
++
++    def active(self):
++        """Habilitados y con todo lo necesario (clave, modelo, URL), en orden de prioridad."""
++        return [a for a in self.adapters() if a.enabled() and a.cfg() is not None]
++
++    # ------------------------------------------------------------------ cambios desde la interfaz
++    def save_provider(self, pid, patch):
++        pid = canonical(pid)
++        if pid not in SPECS:
++            raise ValueError("proveedor desconocido: %s" % pid)
++        patch = patch or {}
++        with self._lock:
++            conf = self.load()
++            cur = dict(conf["providers"].get(pid, {}))
++            if "enabled" in patch:
++                cur["enabled"] = bool(patch["enabled"])
++            for k in ("model", "base_url"):
++                if k in patch:
++                    v = str(patch[k] or "").strip()
++                    if v:
++                        cur[k] = v
++                    else:
++                        cur.pop(k, None)                     # vacío = volver al valor por defecto
++            if "timeout" in patch:
++                try:
++                    t = float(patch["timeout"] or 0)
++                except Exception:
++                    t = None
++                if t is not None:
++                    if t:
++                        cur["timeout"] = max(5.0, min(600.0, t))
++                    else:
++                        cur.pop("timeout", None)
++            if patch.get("clear_key"):
++                self.keystore.delete(pid)
++            elif str(patch.get("api_key") or "").strip():
++                self.keystore.set(pid, patch["api_key"])     # clave vacía = conservar la actual
++            conf["providers"][pid] = cur
++            self._save(conf)
++            self._adapter(pid).health.reset()                # config nueva: empezar sin castigo previo
++        return self.status()
++
++    def set_order(self, order):
++        with self._lock:
++            conf = self.load()
++            conf["order"] = self._clean_order(order or [])
++            self._save(conf)
++        return self.status()
++
++    def set_strategy(self, strategy):
++        with self._lock:
++            conf = self.load()
++            for lvl, val in (strategy or {}).items():
++                if lvl in LEVELS and val in STRATEGIES:
++                    conf["strategy"][lvl] = val
++            self._save(conf)
++        return self.status()
++
++    def migrate_legacy(self):
++        """Pasa la IA de un solo proveedor (aiadvisor / ~/.bunnylol_ai.json) al gestor. Solo si el gestor
++        aún no tiene proveedores habilitados. Se llama al abrir el panel, nunca al arrancar la app."""
++        with self._lock:
++            conf = self.load()
++            if any(v.get("enabled") for v in conf["providers"].values()):
++                return False
++            leg = aiadvisor.load_file_config()
++            prov = str(leg.get("ai_provider") or os.environ.get("BUNNYLOL_AI_PROVIDER") or "").lower()
++            if prov in ("", "off", "none", "no"):
++                return False
++            pid = canonical(prov)
++            if pid not in SPECS:
++                pid = "custom"
++            entry = {"enabled": True}
++            for src, dst in (("ai_model", "model"), ("ai_base_url", "base_url"), ("ai_timeout", "timeout")):
++                if leg.get(src):
++                    entry[dst] = leg[src]
++            conf["providers"][pid] = entry
++            conf["order"] = self._clean_order([pid] + conf["order"])
++            key = leg.get("ai_api_key")
++            if key:
++                self.keystore.set(pid, key)
++                if self.keystore.secure and self.keystore.get(pid) == key:
++                    aiadvisor.clear_file_key()               # ya está en el Administrador de credenciales
++            self._save(conf)
++            return True
++
++    # ------------------------------------------------------------------ uso desde aiadvisor
++    def synthetic_config(self):
++        """Config en el formato del AIWorker. None si no hay ningún proveedor listo (IA apagada)."""
++        act = self.active()
++        if not act:
++            return None
++        conf = self.load()
++        first = act[0].cfg()
++        timeouts = [a.cfg()["timeout"] for a in act]
++        rev = "%s|%s" % (conf.get("updated"), ",".join("%s:%s" % (a.pid, a.cfg()["model"]) for a in act))
++        return {"provider": first["provider"], "base_url": first["base_url"], "model": first["model"],
++                "key": "", "local": first["local"], "weight": conf["weight"], "timeout": max(timeouts),
++                "min_interval": conf["min_interval"], "multi": True, "level": "full",
++                "providers": [a.pid for a in act], "rev": rev}
++
++    def disabled_reason(self):
++        """Si hay proveedores habilitados pero ninguno listo, di qué falta; si no hay ninguno, vacío."""
++        for a in self.adapters():
++            if a.enabled() and a.cfg() is None:
++                return "%s: %s" % (a.spec["label"], a.reason())
++        return ""
++
++    def ask(self, level, messages, validator=None):
++        conf = self.load()
++        level = level if level in LEVELS else "full"
++        strategy = conf["strategy"][level]
++        timeout = conf["fast_timeout"] if level == "fast" else None
++        ready = [a for a in self.active() if a.health.usable()]
++        if not ready:
++            act = self.active()
++            if not act:
++                raise aiadvisor.AIError(self.disabled_reason() or "Ningún proveedor de IA habilitado.")
++            wait = min(a.health.retry_in() for a in act)
++            raise aiadvisor.AIError("todos los proveedores en pausa; reintento en %d s" % wait)
++        if strategy == "consensus" and len(ready) > 1:
++            return self._consensus(ready[: conf["max_consensus"]], messages, validator, timeout)
++        return self._failover(ready, messages, validator, timeout, strategy)
++
++    def _failover(self, ready, messages, validator, timeout, strategy="failover"):
++        attempts = []
++        for a in ready:
++            try:
++                r = a.ask(messages, validator, timeout)
++            except aiadvisor.AIError as e:
++                attempts.append({"provider": a.pid, "error": str(e)[:160]})
++                continue
++            r.meta.update(strategy=strategy, providers=[a.pid], attempts=attempts)
++            return r
++        raise aiadvisor.AIError("; ".join("%s: %s" % (x["provider"], x["error"]) for x in attempts) or "sin respuesta")
++
++    def _consensus(self, ready, messages, validator, timeout):
++        results, errors = {}, []
++        t0 = self._clock()
++
++        def run(a):
++            try:
++                results[a.pid] = a.ask(messages, validator, timeout)
++            except aiadvisor.AIError as e:
++                errors.append({"provider": a.pid, "error": str(e)[:160]})
++            except Exception as e:
++                errors.append({"provider": a.pid, "error": type(e).__name__})
++
++        threads = [threading.Thread(target=run, args=(a,), daemon=True, name="bunnylol-ai-" + a.pid) for a in ready]
++        for t in threads:
++            t.start()
++        deadline = t0 + max(a.cfg()["timeout"] for a in ready) + 5
++        for t in threads:
++            t.join(max(0.0, deadline - self._clock()))
++        got = [(a.pid, results[a.pid]) for a in ready if a.pid in results]      # orden de prioridad, no de llegada
++        if not got:
++            raise aiadvisor.AIError("; ".join("%s: %s" % (x["provider"], x["error"]) for x in errors) or "sin respuesta")
++        ms = int((self._clock() - t0) * 1000)
++        if len(got) == 1 or validator is None:
++            r = got[0][1]
++            r.meta.update(strategy="consensus", providers=[got[0][0]], failed=errors, quorum="1/%d" % len(ready))
++            return r
++        merged, by = consensus.merge([(p, r.parsed) for p, r in got])
++        out = Reply(consensus.to_text(merged), parsed=merged, provider="consenso", model="+".join(p for p, _ in got),
++                    ms=ms, method="api", strategy="consensus", providers=[p for p, _ in got], failed=errors,
++                    by=by, quorum="%d/%d" % (len(got), len(ready)))
++        return out
++
++    def test(self, pid):
++        """Prueba real y barata de un proveedor concreto (ignora la pausa por fallos). Nunca lanza."""
++        pid = canonical(pid)
++        if pid not in SPECS:
++            return {"ok": False, "error": "proveedor desconocido"}
++        a = self._adapter(pid)
++        t0 = self._clock()
++        try:
++            r = a.ask([{"role": "user", "content": 'Responde solo con este JSON: {"ok":true}'}], None, 60, bypass_pause=True)
++            return {"ok": True, "provider": pid, "model": r.meta.get("model"), "ms": int((self._clock() - t0) * 1000),
++                    "reply": aiadvisor._clip(str(r), 60)}
++        except aiadvisor.AIError as e:
++            return {"ok": False, "provider": pid, "model": (a.cfg() or {}).get("model"), "error": str(e)}
++        except Exception as e:
++            return {"ok": False, "provider": pid, "error": type(e).__name__}
++
++    def status(self):
++        conf = self.load()
++        return {"providers": [a.status() for a in self.adapters()], "order": list(conf["order"]),
++                "strategy": dict(conf["strategy"]), "max_consensus": conf["max_consensus"],
++                "active": [a.pid for a in self.active()], "keystore": self.keystore.describe()}
++
++
++_MANAGER = None
++_MLOCK = threading.Lock()
++
++
++def get_manager():
++    global _MANAGER
++    with _MLOCK:
++        if _MANAGER is None:
++            _MANAGER = ProviderManager()
++        return _MANAGER
++
++
++def set_manager(m):
++    """Instala (o quita, con None) el gestor global. Lo usan las pruebas."""
++    global _MANAGER
++    with _MLOCK:
++        _MANAGER = m
+diff --git a/backend/ai/providers.py b/backend/ai/providers.py
+new file mode 100644
+index 0000000..1ab95ee
+--- /dev/null
++++ b/backend/ai/providers.py
+@@ -0,0 +1,153 @@
++"""Catálogo de proveedores y un adaptador por proveedor.
++
++Cada adaptador tiene identidad (id), estado de salud, tiempo de espera y validación propios.
++Hoy todos hablan «chat/completions» compatible con OpenAI (método "api"). El método "edge"
++(puente con Microsoft Edge) queda declarado pero NO disponible hasta la etapa 3: no se simula.
++
++Los modelos por defecto son solo valores iniciales (cambian con el tiempo): se editan en el panel.
++Las URL base de Gemini y DeepSeek están tomadas de su documentación oficial.
++"""
++import os
++import time
++
++from .. import aiadvisor
++from .health import ProviderHealth
++
++SPECS = {
++    "gratis": {"label": "Gratis · sin clave (Pollinations)", "kind": "public", "needs_key": False, "local": False,
++               "base_url": "https://text.pollinations.ai/openai", "model": "openai", "env": "", "timeout": 90.0,
++               "note": "Servicio público de terceros: sin garantías, puede ir lento o caerse.", "edge_site": ""},
++    "gemini": {"label": "Gemini (Google)", "kind": "api", "needs_key": True, "local": False,
++               "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-3.8-flash",
++               "env": "GEMINI_API_KEY", "timeout": 60.0,
++               "note": "Clave de Google AI Studio; revisa las cuotas gratuitas de tu cuenta.", "edge_site": "gemini.google.com"},
++    "deepseek": {"label": "DeepSeek", "kind": "api", "needs_key": True, "local": False,
++                 "base_url": "https://api.deepseek.com", "model": "deepseek-flash",
++                 "env": "DEEPSEEK_API_KEY", "timeout": 90.0,
++                 "note": "Clave de la plataforma DeepSeek; revisa saldo y límites de tu cuenta.", "edge_site": "chat.deepseek.com"},
++    "grok": {"label": "Grok (xAI)", "kind": "api", "needs_key": True, "local": False,
++             "base_url": "https://api.x.ai/v1", "model": "grok-4", "env": "XAI_API_KEY", "timeout": 90.0,
++             "note": "La API de xAI requiere clave.", "edge_site": "grok.com"},
++    "chatgpt": {"label": "ChatGPT (OpenAI)", "kind": "api", "needs_key": True, "local": False,
++                "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "env": "OPENAI_API_KEY",
++                "timeout": 60.0, "note": "La API de OpenAI requiere clave y saldo.", "edge_site": "chatgpt.com"},
++    "ollama": {"label": "Ollama · local, sin límites", "kind": "local", "needs_key": False, "local": True,
++               "base_url": "http://localhost:11434/v1", "model": "llama3.1:8b", "env": "", "timeout": 300.0,
++               "note": "Necesita Ollama abierto en este PC.", "edge_site": ""},
++    "openrouter": {"label": "OpenRouter", "kind": "api", "needs_key": True, "local": False,
++                   "base_url": "https://openrouter.ai/api/v1", "model": "x-ai/grok-4", "env": "OPENROUTER_API_KEY",
++                   "timeout": 90.0, "note": "", "edge_site": ""},
++    "custom": {"label": "Otro (compatible OpenAI)", "kind": "api", "needs_key": False, "local": False,
++               "base_url": "", "model": "", "env": "BUNNYLOL_AI_KEY", "timeout": 60.0,
++               "note": "Indica URL base y modelo.", "edge_site": ""},
++}
++ALIASES = {"openai": "chatgpt"}
++DEFAULT_ORDER = ["gratis", "gemini", "deepseek", "grok", "chatgpt", "ollama", "openrouter", "custom"]
++
++
++def canonical(pid):
++    pid = str(pid or "").strip().lower()
++    return ALIASES.get(pid, pid)
++
++
++class Reply(str):
++    """Texto de la respuesta + metadatos de atribución (qué proveedor, modelo, latencia, método)."""
++
++    def __new__(cls, text, parsed=None, **meta):
++        obj = super().__new__(cls, text)
++        obj.parsed = parsed
++        obj.meta = meta
++        return obj
++
++
++class InvalidReply(aiadvisor.AIError):
++    pass
++
++
++class ProviderAdapter:
++    def __init__(self, pid, keystore, settings=None, transport=None, clock=time.time):
++        self.pid = pid
++        self.spec = SPECS[pid]
++        self.keystore = keystore
++        self.settings = settings if settings is not None else {}
++        self._tx = transport
++        self._clock = clock
++        self.health = ProviderHealth(clock)
++
++    # ---- configuración efectiva
++    def _key(self):
++        env = self.spec["env"]
++        return self.keystore.get(self.pid) or (os.environ.get(env, "") if env else "") or ""
++
++    def cfg(self):
++        """Config compatible con aiadvisor.http_chat, o None si el proveedor no puede usarse todavía."""
++        s, sp = self.settings, self.spec
++        base = str(s.get("base_url") or sp["base_url"] or "").rstrip("/")
++        model = str(s.get("model") or sp["model"] or "")
++        key = self._key()
++        if not base or not model or (sp["needs_key"] and not key):
++            return None
++        try:
++            timeout = float(s.get("timeout") or sp["timeout"])
++        except Exception:
++            timeout = sp["timeout"]
++        return {"provider": self.pid, "base_url": base, "model": model, "key": key, "local": sp["local"],
++                "timeout": timeout, "min_interval": 2.0}
++
++    def reason(self):
++        """Por qué no se puede usar (vacío si sí se puede)."""
++        s, sp = self.settings, self.spec
++        if not str(s.get("base_url") or sp["base_url"]):
++            return "Falta la URL base."
++        if not str(s.get("model") or sp["model"]):
++            return "Falta el modelo."
++        if sp["needs_key"] and not self._key():
++            return "Falta la clave API."
++        return ""
++
++    def enabled(self):
++        return bool(self.settings.get("enabled"))
++
++    # ---- llamada
++    def ask(self, messages, validator=None, timeout=None, bypass_pause=False):
++        cfg = self.cfg()
++        label = self.spec["label"]
++        if cfg is None:
++            raise aiadvisor.AIError("%s: %s" % (label, self.reason() or "no configurado"))
++        if not bypass_pause and not self.health.usable():
++            raise aiadvisor.AIError("%s en pausa %d s tras fallos" % (label, self.health.retry_in()))
++        if timeout:
++            cfg["timeout"] = min(cfg["timeout"], float(timeout))
++        t0 = self._clock()
++        tx = self._tx or aiadvisor.http_chat            # se resuelve al llamar: las pruebas pueden sustituirlo
++        try:
++            raw = tx(cfg, messages)
++            parsed = None
++            if validator is not None:
++                parsed = validator(raw)
++                if parsed is None:
++                    raise InvalidReply("respuesta inválida (ignorada)")
++        except InvalidReply as e:
++            self.health.failure("invalid", e)
++            raise
++        except aiadvisor.AIError as e:
++            self.health.failure("timeout" if "tardó" in str(e) else "error", e)
++            raise
++        except Exception as e:
++            self.health.failure("error", type(e).__name__)
++            raise aiadvisor.AIError(type(e).__name__)
++        ms = int((self._clock() - t0) * 1000)
++        self.health.success(ms)
++        return Reply(raw, parsed=parsed, provider=self.pid, model=cfg["model"], ms=ms, method="api")
++
++    # ---- estado para la interfaz (nunca incluye la clave)
++    def status(self):
++        key = self._key()
++        sp = self.spec
++        return {"id": self.pid, "label": sp["label"], "kind": sp["kind"], "enabled": self.enabled(),
++                "configured": self.cfg() is not None, "reason": self.reason(), "note": sp["note"],
++                "model": self.settings.get("model") or "", "default_model": sp["model"],
++                "base_url": self.settings.get("base_url") or "", "needs_key": sp["needs_key"],
++                "has_key": bool(key), "key_hint": self.keystore.hint(key),
++                "edge": {"available": False, "site": sp["edge_site"], "note": "Puente Edge: etapa 3 (no disponible aún)"},
++                "health": self.health.snapshot()}
+diff --git a/backend/ai_routes.py b/backend/ai_routes.py
+index b8e911a..5d8cebc 100644
+--- a/backend/ai_routes.py
++++ b/backend/ai_routes.py
+@@ -13,6 +13,13 @@ from . import aiadvisor
+ PREFIXES = ("/api/matchup/live", "/api/ai/")
+ 
+ 
++def _reset_worker(advisor):
++    """La config cambió: que la próxima consulta vuelva a preguntar."""
++    advisor.ai.worker._cache.clear()
++    advisor.ai.worker._pause_until = 0.0
++    advisor.ai.worker._fails = 0
++
++
+ def _masked(cfg):
+     out = dict(cfg)
+     k = out.pop("ai_api_key", "")
+@@ -47,7 +54,29 @@ def handle(advisor, method, path, body=None):
+             advisor.ai.worker._fails = 0
+             return 200, {"ok": True, "config": _masked(aiadvisor.load_file_config()), "status": advisor.ai_status()}
+         if path == "/api/ai/test" and method == "POST":
+-            return 200, aiadvisor.test_connection(None)
++            return 200, aiadvisor.test_connection(None, provider=body.get("provider") or None)
++        # ---- gestor multi-IA (backend/ai): proveedores, orden y estrategia por modo
++        if path.startswith("/api/ai/providers"):
++            m = aiadvisor._manager()
++            if m is None:
++                return 503, {"ok": False, "error": "gestor multi-IA no disponible"}
++            if path == "/api/ai/providers" and method == "GET":
++                m.migrate_legacy()                      # primera vez: trae la IA de un solo proveedor ya configurada
++                return 200, {"ok": True, **m.status()}
++            if path == "/api/ai/providers" and method == "POST":
++                try:
++                    if "order" in body:
++                        m.set_order(body.get("order"))
++                    if "strategy" in body:
++                        m.set_strategy(body.get("strategy"))
++                    if body.get("provider"):
++                        m.save_provider(body["provider"], body)
++                except ValueError as e:
++                    return 400, {"ok": False, "error": str(e)}
++                _reset_worker(advisor)
++                return 200, {"ok": True, **m.status(), "status": advisor.ai_status()}
++            if path == "/api/ai/providers/test" and method == "POST":
++                return 200, m.test(body.get("provider"))
+     except Exception as e:
+         return 500, {"ok": False, "error": type(e).__name__ + ": " + str(e)[:160]}
+     return None, None
+diff --git a/backend/aiadvisor.py b/backend/aiadvisor.py
+index 1e8e986..8c48e71 100644
+--- a/backend/aiadvisor.py
++++ b/backend/aiadvisor.py
+@@ -137,8 +137,42 @@ def save_file_config(patch):
+     return cur
+ 
+ 
++def clear_file_key():
++    """Quita solo la clave API del archivo de IA (cuando ya está a salvo en el Administrador de credenciales)."""
++    try:
++        with open(CONFIG_FILE, encoding="utf-8") as f:
++            d = json.load(f)
++    except Exception:
++        return False
++    if not d.pop("ai_api_key", None):
++        return False
++    tmp = CONFIG_FILE + ".tmp"
++    with open(tmp, "w", encoding="utf-8") as f:
++        json.dump(d, f, ensure_ascii=False, indent=2)
++    os.replace(tmp, CONFIG_FILE)
++    _FILE_CACHE.update(mt=None, data={})
++    return True
++
++
++def _manager():
++    """Gestor multi-IA (backend/ai). Import perezoso: si falla, la IA de un solo proveedor sigue igual."""
++    try:
++        from .ai.manager import get_manager
++        return get_manager()
++    except Exception:
++        return None
++
++
+ def disabled_reason(settings=None):
+     """Por qué la IA está apagada (para decírselo al usuario en vez de un «apagada» mudo)."""
++    m = _manager()
++    if m is not None:
++        try:
++            why = m.disabled_reason()
++            if why:
++                return why
++        except Exception:
++            pass
+     s = {**load_file_config(), **{k: v for k, v in (settings or {}).items() if v not in (None, "")}}
+     provider = str(s.get("ai_provider") or os.environ.get("BUNNYLOL_AI_PROVIDER") or "off").lower()
+     if provider in ("", "off", "none", "no"):
+@@ -437,11 +471,43 @@ def http_chat(cfg, messages, max_tokens=None):
+         raise AIError(type(e).__name__ + (": " + _clip(e, 100) if str(e) else ""))
+ 
+ 
+-def test_connection(settings=None):
++def default_transport(cfg, messages, validator=None):
++    """Transporte del AIWorker. Con el gestor multi-IA activo (cfg['multi']) reparte entre proveedores según
++    la estrategia del nivel; si no, usa el proveedor único de siempre. http_chat se resuelve al llamar."""
++    if cfg.get("multi"):
++        m = _manager()
++        if m is None:
++            raise AIError("gestor multi-IA no disponible")
++        return m.ask(cfg.get("level", "full"), messages, validator)
++    return http_chat(cfg, messages)
++
++
++default_transport.wants_validator = True
++
++
++def active_config(settings=None):
++    """Config que usa la app: gestor multi-IA si hay algún proveedor listo; si no, el proveedor único de siempre."""
++    m = _manager()
++    if m is not None:
++        try:
++            cfg = m.synthetic_config()
++            if cfg:
++                return cfg
++        except Exception:
++            pass
++    return resolve_config(settings)
++
++
++def test_connection(settings=None, provider=None):
+     """Prueba real y barata: ¿responde el proveedor con esta clave y este modelo? Nunca lanza."""
+-    cfg = resolve_config(settings)
++    if provider:
++        m = _manager()
++        return m.test(provider) if m is not None else {"ok": False, "error": "gestor multi-IA no disponible"}
++    cfg = active_config(settings)
+     if not cfg:
+         return {"ok": False, "error": disabled_reason(settings)}
++    if cfg.get("multi"):
++        return _manager().test(cfg["provider"])
+     t0 = time.time()
+     try:
+         text = http_chat(cfg, [{"role": "user", "content": 'Responde solo con este JSON: {"ok":true}'}], max_tokens=100)
+@@ -459,7 +525,7 @@ class AIWorker:
+     """Una sola petición viva; si llega una nueva mientras espera, la vieja se descarta."""
+ 
+     def __init__(self, transport=None, clock=time.time):
+-        self._tx = transport or http_chat
++        self._tx = transport or default_transport
+         self._clock = clock
+         self._cv = threading.Condition()
+         self._pending = None
+@@ -530,12 +596,24 @@ class AIWorker:
+             t0 = self._clock()
+             parsed = None
+             try:
+-                raw = self._tx(cfg, build_messages(facts))
+-                parsed = parse_reply(raw, [c["id"] for c in facts["candidatos"]],
+-                                     [c["id"] for c in facts.get("catalogo") or []],
+-                                     [c["id"] for c in facts.get("catalogo") or [] if c.get("bota")])
++                ids = [c["id"] for c in facts["candidatos"]]
++                cat_ids = [c["id"] for c in facts.get("catalogo") or []]
++                boots = [c["id"] for c in facts.get("catalogo") or [] if c.get("bota")]
++
++                def validator(text, ids=ids, cat_ids=cat_ids, boots=boots):
++                    return parse_reply(text, ids, cat_ids, boots)
++
++                messages = build_messages(facts)
++                if getattr(self._tx, "wants_validator", False):     # el gestor valida por proveedor y pasa al siguiente
++                    raw = self._tx(cfg, messages, validator)
++                else:
++                    raw = self._tx(cfg, messages)
++                parsed = validator(raw)
+                 if parsed is None:
+                     raise AIError("respuesta inválida (ignorada)")
++                meta = getattr(raw, "meta", None)                  # quién respondió (atribución por proveedor)
++                if meta:
++                    parsed["meta"] = dict(meta)
+                 self._fails = 0
+                 self.last_error = ""
+             except AIError as e:
+@@ -757,17 +835,17 @@ class AILayer:
+ 
+     def fingerprint(self, settings=None):
+         """Cambia si cambia la config de IA, la respuesta de la IA o la opinión pegada."""
+-        cfg = resolve_config(settings)
+-        k = (cfg["provider"], cfg["model"], cfg["base_url"], cfg["key"], cfg["weight"]) if cfg else None
++        cfg = active_config(settings)
++        k = (cfg["provider"], cfg["model"], cfg["base_url"], cfg["key"], cfg["weight"], cfg.get("rev")) if cfg else None
+         return (k, self.worker.rev, self.opinion.rev, bool(self.opinion.live()))
+ 
+     def settled(self, sig, settings=None):
+         """True si el resultado ya no cambiará solo (IA apagada o respuesta ya recibida): se puede memorizar."""
+-        return resolve_config(settings) is None and not self.opinion.live() or self.worker.get(sig) is not None
++        return active_config(settings) is None and not self.opinion.live() or self.worker.get(sig) is not None
+ 
+     def enrich(self, live, result, settings=None, tools=None):
+         try:
+-            cfg = resolve_config(settings)
++            cfg = active_config(settings)
+             op_text = self.opinion.live()
+             facts = build_facts(live, result)
+             sig = signature(facts)
+@@ -798,6 +876,15 @@ class AILayer:
+                 result["ai"]["error"] = st["error"]
+             result["ai"]["provider"] = (cfg or {}).get("provider")
+             result["ai"]["local"] = bool((cfg or {}).get("local"))
++            meta = (ai or {}).get("meta") or {}
++            if meta:                                       # quién produjo esta respuesta (nunca se mezcla entre proveedores)
++                result["ai"]["provider"] = meta.get("provider") or result["ai"]["provider"]
++                result["ai"]["providers"] = list(meta.get("providers") or [])
++                result["ai"]["strategy"] = meta.get("strategy")
++                result["ai"]["attempts"] = list(meta.get("attempts") or []) + list(meta.get("failed") or [])
++                if isinstance(result.get("ai_build"), dict):
++                    result["ai_build"]["provider"] = result["ai"]["provider"]
++                    result["ai_build"]["providers"] = result["ai"]["providers"]
+             result["rev"] = f"{sig[:8]}.{st['rev']}.{self.opinion.rev}"
+         except Exception as e:                           # la IA es un extra: el análisis base sigue intacto
+             result["ai"] = {"status": "error", "error": type(e).__name__}
+@@ -805,7 +892,7 @@ class AILayer:
+         return result
+ 
+     def status(self, settings=None):
+-        cfg = resolve_config(settings)
++        cfg = active_config(settings)
+         return {"enabled": bool(cfg), "reason": "" if cfg else disabled_reason(settings),
+                 "provider": (cfg or {}).get("provider"), "model": (cfg or {}).get("model"),
+                 "local": bool((cfg or {}).get("local")), "has_key": bool((cfg or {}).get("key")),
+diff --git a/backend/recommend.py b/backend/recommend.py
+index a3054a3..dfb9046 100644
+--- a/backend/recommend.py
++++ b/backend/recommend.py
+@@ -404,7 +404,7 @@ class Advisor:
+         """Herramientas para la capa de IA: catálogo cerrado de objetos reales, nombre/icono y coste neto.
+         El catálogo solo se arma si la IA está activa y se cachea por versión de parche."""
+         tools = {"info": itemrules.item_info, "cost": parity.net_cost, "parts": self._item_parts}
+-        if not aiadvisor.resolve_config(settings):
++        if not aiadvisor.active_config(settings):
+             return tools
+         ver = ddragon.version
+         if not (self._ai_cat and self._ai_cat[0] == ver):
+diff --git a/backend/server.py b/backend/server.py
+index f59eae9..af4556f 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -113,7 +113,8 @@ class Handler(BaseHTTPRequestHandler):
+         if not (raw.startswith("/api/ai/") or raw == "/api/matchup/live"):
+             return False
+         # Cambiar la clave o gastar tu cuota solo desde este PC, no desde otros aparatos de la red.
+-        if self._is_remote() and raw in ("/api/ai/config", "/api/ai/test") and (method == "POST" or raw == "/api/ai/config"):
++        if self._is_remote() and (raw.startswith("/api/ai/providers") or (
++                raw in ("/api/ai/config", "/api/ai/test") and (method == "POST" or raw == "/api/ai/config"))):
+             self._send(403, {"ok": False, "error": "La IA solo se configura desde el PC."})
+             return True
+         body = None
+diff --git a/requirements.txt b/requirements.txt
+index 5603050..3ae58bf 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,2 +1,3 @@
+ pywebview>=5
+-requests>=2.28
+\ No newline at end of file
++requests>=2.28
++keyring>=24; sys_platform == "win32"
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 3b53ec0..ccc4aa6 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -9,9 +9,16 @@ una de cada dos ejecuciones sin que el código de producción hubiera cambiado.
+ Aquí se espera a que terminen esos hilos ANTES de ejecutar ninguna prueba, de modo
+ que la suite sea determinista. No se salta ni se debilita ningún test.
+ """
++import os
++import tempfile
+ import threading
+ import time
+ 
++# Aislar las pruebas del equipo real: sin claves del Administrador de credenciales ni proveedores guardados.
++os.environ.setdefault("BUNNYLOL_KEYSTORE", "memory")
++os.environ.setdefault("BUNNYLOL_PROVIDERS_FILE", os.path.join(tempfile.gettempdir(), "bunnylol_test_providers_%d.json" % os.getpid()))
++os.environ.setdefault("BUNNYLOL_KEYS_FILE", os.path.join(tempfile.gettempdir(), "bunnylol_test_keys_%d.json" % os.getpid()))
++
+ 
+ def pytest_collection_finish(session):
+     deadline = time.time() + 120
+diff --git a/tests/test_ai_providers.py b/tests/test_ai_providers.py
+new file mode 100644
+index 0000000..2fed329
+--- /dev/null
++++ b/tests/test_ai_providers.py
+@@ -0,0 +1,396 @@
++"""Gestor multi-IA (etapa 2): adaptadores, salud, failover, consenso, atribución, claves y rutas. Sin red."""
++import json, os, sys, tempfile, time, types, unittest
++HERE = os.path.dirname(os.path.abspath(__file__))
++sys.path.insert(0, os.path.dirname(HERE))
++sys.path.insert(0, HERE)
++os.environ.setdefault("BUNNYLOL_KEYSTORE", "memory")
++os.environ.setdefault("BUNNYLOL_AI_FILE", os.path.join(HERE, "_no_ai_config.json"))
++from backend import aiadvisor as ai, ai_routes
++from backend.ai import consensus
++from backend.ai.health import ProviderHealth
++from backend.ai.keystore import KeyStore
++from backend.ai.manager import ProviderManager, set_manager
++from backend.ai.providers import InvalidReply, ProviderAdapter
++from test_aiadvisor import ALLOWED, LIVE, result, wait
++
++MSG = [{"role": "user", "content": "x"}]
++KEY = "AIza-test-key-123456"
++
++
++class Clock:
++    def __init__(self):
++        self.t = 1000.0
++
++    def __call__(self):
++        return self.t
++
++
++class Fake:
++    """Transporte falso por proveedor: texto, excepción o función. Cuenta las llamadas."""
++    def __init__(self, **behaviors):
++        self.b = behaviors
++        self.calls = {}
++        self.cfgs = {}
++
++    def __call__(self, cfg, messages):
++        pid = cfg["provider"]
++        self.calls[pid] = self.calls.get(pid, 0) + 1
++        self.cfgs[pid] = dict(cfg)
++        v = self.b[pid]
++        if isinstance(v, Exception):
++            raise v
++        return v(cfg, messages) if callable(v) else v
++
++
++def build(ids):
++    return json.dumps({"build": [{"id": i, "why": "p%d" % i} for i in ids], "resumen": "r"})
++
++
++def validator(text):
++    return ai.parse_reply(text, ALLOWED, ALLOWED, ())
++
++
++def mk(fake, clock=None, ks=None):
++    path = tempfile.mktemp(suffix=".json")
++    m = ProviderManager(path=path, keystore=ks or KeyStore("memory"), transport=fake, clock=clock or Clock())
++    return m
++
++
++def enable(m, *pids):
++    for p in pids:
++        patch = {"enabled": True}
++        if m._adapter(p).spec["needs_key"]:
++            patch["api_key"] = KEY
++        m.save_provider(p, patch)
++
++
++class Basics(unittest.TestCase):
++    def test_keystore_memory_and_hint(self):
++        ks = KeyStore("memory")
++        self.assertEqual(ks.get("x"), "")
++        self.assertTrue(ks.set("x", " abcdefgh1234 "))
++        self.assertEqual(ks.get("x"), "abcdefgh1234")
++        self.assertEqual(ks.hint(ks.get("x")), "…1234")
++        self.assertFalse(ks.set("x", "   "))                       # vacío no borra ni guarda
++        ks.delete("x")
++        self.assertEqual(ks.get("x"), "")
++
++    def test_health_backoff_and_states(self):
++        c = Clock()
++        h = ProviderHealth(c)
++        self.assertEqual(h.state(), "sin_uso")
++        h.failure("error", "boom")
++        self.assertFalse(h.usable())
++        self.assertEqual(h.state(), "degradado")
++        c.t += 3
++        self.assertTrue(h.usable())
++        h.failure("invalid", "x"); c.t += 10; h.failure("timeout", "t")
++        self.assertEqual((h.state(), h.invalid, h.timeouts, h.errors), ("caido", 1, 1, 2))
++        h.success(120)
++        self.assertEqual((h.state(), h.fails, h.last_ms), ("ok", 0, 120))
++        self.assertTrue(h.usable())
++
++
++class Adapter(unittest.TestCase):
++    def test_needs_key_then_ready(self):
++        a = ProviderAdapter("gemini", KeyStore("memory"), {"enabled": True}, transport=Fake(gemini="x"))
++        self.assertIsNone(a.cfg())
++        self.assertIn("clave", a.reason())
++        with self.assertRaises(ai.AIError):
++            a.ask(MSG)
++        a.keystore.set("gemini", KEY)
++        cfg = a.cfg()
++        self.assertTrue(cfg["base_url"].startswith("https://generativelanguage.googleapis.com/v1beta/openai"))
++        self.assertEqual(cfg["key"], KEY)
++        self.assertNotIn(KEY, json.dumps(a.status()))               # la clave nunca sale en el estado
++
++    def test_ask_success_attribution_and_health(self):
++        a = ProviderAdapter("gratis", KeyStore("memory"), {"enabled": True}, transport=Fake(gratis=build([300])))
++        r = a.ask(MSG, validator)
++        self.assertEqual((r.meta["provider"], r.meta["method"]), ("gratis", "api"))
++        self.assertEqual(r.parsed["build"][0]["id"], 300)
++        self.assertEqual((a.health.ok, a.health.state()), (1, "ok"))
++
++    def test_invalid_reply_is_counted_not_trusted(self):
++        a = ProviderAdapter("gratis", KeyStore("memory"), {}, transport=Fake(gratis="Había una vez…"))
++        with self.assertRaises(InvalidReply):
++            a.ask(MSG, validator)
++        self.assertEqual((a.health.invalid, a.health.errors), (1, 0))
++
++    def test_timeout_classified(self):
++        a = ProviderAdapter("gratis", KeyStore("memory"), {}, transport=Fake(gratis=ai.AIError("el proveedor tardó más de 60 s")))
++        with self.assertRaises(ai.AIError):
++            a.ask(MSG)
++        self.assertEqual((a.health.timeouts, a.health.errors), (1, 1))
++
++    def test_unexpected_exception_becomes_aierror(self):
++        a = ProviderAdapter("gratis", KeyStore("memory"), {}, transport=Fake(gratis=ValueError("x")))
++        with self.assertRaises(ai.AIError):
++            a.ask(MSG)
++
++
++class Manager(unittest.TestCase):
++    def test_off_by_default(self):
++        m = mk(Fake())
++        self.assertIsNone(m.synthetic_config())
++        self.assertEqual(m.active(), [])
++        with self.assertRaises(ai.AIError):
++            m.ask("full", MSG)
++
++    def test_enable_builds_synthetic_config_without_key(self):
++        m = mk(Fake())
++        enable(m, "gratis", "gemini")
++        cfg = m.synthetic_config()
++        self.assertTrue(cfg["multi"])
++        self.assertEqual(cfg["providers"], ["gratis", "gemini"])
++        self.assertEqual(cfg["key"], "")                           # la clave no viaja en la config del worker
++
++    def test_failover_attempts_and_pause(self):
++        c = Clock()
++        f = Fake(gratis=ai.AIError("HTTP 500"), gemini=build([300]))
++        m = mk(f, c)
++        enable(m, "gratis", "gemini")
++        r = m.ask("fast", MSG, validator)
++        self.assertEqual(r.meta["provider"], "gemini")
++        self.assertEqual(r.meta["attempts"][0]["provider"], "gratis")
++        self.assertEqual(f.calls, {"gratis": 1, "gemini": 1})
++        m.ask("fast", MSG, validator)                              # gratis sigue en pausa: ni se intenta
++        self.assertEqual(f.calls, {"gratis": 1, "gemini": 2})
++        c.t += 5
++        m.ask("fast", MSG, validator)                              # pasada la pausa, se reintenta
++        self.assertEqual(f.calls["gratis"], 2)
++
++    def test_all_fail_raises_with_reasons(self):
++        m = mk(Fake(gratis=ai.AIError("a"), gemini=ai.AIError("b")))
++        enable(m, "gratis", "gemini")
++        with self.assertRaises(ai.AIError) as e:
++            m.ask("fast", MSG, validator)
++        self.assertIn("gratis: a", str(e.exception))
++        with self.assertRaises(ai.AIError) as e2:                  # todos en pausa
++            m.ask("fast", MSG, validator)
++        self.assertIn("pausa", str(e2.exception))
++
++    def test_fast_asks_only_first_full_asks_all(self):
++        f = Fake(gratis=build([300, 301]), gemini=build([301, 302]))
++        m = mk(f)
++        enable(m, "gratis", "gemini")
++        r = m.ask("fast", MSG, validator)
++        self.assertEqual((r.meta["strategy"], f.calls), ("failover", {"gratis": 1}))
++        r = m.ask("full", MSG, validator)
++        self.assertEqual(r.meta["strategy"], "consensus")
++        self.assertEqual(r.meta["providers"], ["gratis", "gemini"])
++        self.assertEqual(f.calls, {"gratis": 2, "gemini": 1})
++
++    def test_consensus_borda_and_attribution(self):
++        m = mk(Fake(gratis=build([300, 301]), gemini=build([301, 302])))
++        enable(m, "gratis", "gemini")
++        r = m.ask("full", MSG, validator)
++        ids = [b["id"] for b in r.parsed["build"]]
++        self.assertEqual(ids, [301, 300, 302])                      # 301: 5+6; 300: 6; 302: 5
++        self.assertEqual(r.meta["by"]["build"][301], ["gratis", "gemini"])
++        self.assertEqual(r.meta["by"]["unanimous_build"], [301])
++        self.assertEqual(ai.parse_reply(str(r), ALLOWED, ALLOWED, ())["build"][0]["id"], 301)   # re-valida igual
++
++    def test_consensus_survives_failed_or_invalid_member(self):
++        m = mk(Fake(gratis="Una historia sin JSON", gemini=build([300]), deepseek=ai.AIError("HTTP 429")))
++        enable(m, "gratis", "gemini", "deepseek")
++        r = m.ask("full", MSG, validator)
++        self.assertEqual(r.meta["providers"], ["gemini"])
++        self.assertEqual({x["provider"] for x in r.meta["failed"]}, {"gratis", "deepseek"})
++        self.assertEqual(m._adapter("gratis").health.invalid, 1)   # la respuesta inválida queda registrada
++
++    def test_fast_level_caps_timeout(self):
++        f = Fake(ollama=build([300]))
++        m = mk(f)
++        enable(m, "ollama")
++        m.ask("fast", MSG, validator)
++        self.assertLessEqual(f.cfgs["ollama"]["timeout"], 20.0)
++        m.ask("full", MSG, validator)
++        self.assertEqual(f.cfgs["ollama"]["timeout"], 300.0)
++
++    def test_status_hides_keys_and_declares_edge_unavailable(self):
++        m = mk(Fake())
++        enable(m, "gemini")
++        st = m.status()
++        self.assertNotIn(KEY, json.dumps(st))
++        g = next(p for p in st["providers"] if p["id"] == "gemini")
++        self.assertTrue(g["has_key"] and g["configured"])
++        self.assertEqual(g["key_hint"], "…3456")
++        self.assertFalse(g["edge"]["available"])                    # el puente Edge no se simula
++
++    def test_save_validation_clear_key_order_strategy(self):
++        m = mk(Fake())
++        with self.assertRaises(ValueError):
++            m.save_provider("nope", {})
++        enable(m, "gemini")
++        m.save_provider("gemini", {"api_key": ""})                  # vacío = conservar
++        self.assertTrue(m._adapter("gemini").cfg())
++        m.save_provider("gemini", {"clear_key": True})
++        self.assertIsNone(m._adapter("gemini").cfg())
++        m.save_provider("gemini", {"model": "m-x", "timeout": 30})
++        self.assertEqual(m.load()["providers"]["gemini"]["model"], "m-x")
++        m.save_provider("gemini", {"model": "", "timeout": 0})      # vacío = valor por defecto
++        self.assertNotIn("model", m.load()["providers"]["gemini"])
++        self.assertNotIn("timeout", m.load()["providers"]["gemini"])
++        self.assertEqual(m.set_order(["openai", "deepseek", "zzz"])["order"][:2], ["chatgpt", "deepseek"])
++        m.set_strategy({"fast": "consensus", "full": "bogus", "x": "failover"})
++        self.assertEqual(m.load()["strategy"], {"fast": "consensus", "full": "consensus"})
++
++    def test_persists_across_instances_and_keys_not_in_file(self):
++        ks = KeyStore("memory")
++        m = mk(Fake(), ks=ks)
++        enable(m, "gemini")
++        raw = open(m.path, encoding="utf-8").read()
++        self.assertNotIn(KEY, raw)
++        m2 = ProviderManager(path=m.path, keystore=ks, transport=Fake())
++        self.assertEqual([a.pid for a in m2.active()], ["gemini"])
++
++    def test_corrupt_file_falls_back_to_defaults(self):
++        m = mk(Fake())
++        open(m.path, "w").write("{no json")
++        self.assertEqual(m.active(), [])
++
++    def test_test_ignores_pause_and_never_raises(self):
++        m = mk(Fake(gratis=ai.AIError("HTTP 500")))
++        enable(m, "gratis")
++        self.assertFalse(m.test("gratis")["ok"])
++        self.assertFalse(m.test("gratis")["ok"])                    # sigue intentando aunque esté en pausa
++        self.assertFalse(m.test("nope")["ok"])
++
++
++class Legacy(unittest.TestCase):
++    def setUp(self):
++        self.old = (ai.CONFIG_FILE, dict(ai._FILE_CACHE))
++        ai.CONFIG_FILE = tempfile.mktemp(suffix=".json")
++        ai._FILE_CACHE.update(mt=None, data={})
++        json.dump({"ai_provider": "openai", "ai_model": "gpt-x", "ai_api_key": "sk-legacy-12345678"}, open(ai.CONFIG_FILE, "w"))
++
++    def tearDown(self):
++        ai.CONFIG_FILE = self.old[0]
++        ai._FILE_CACHE.update(self.old[1])
++
++    def test_migration_keeps_legacy_key_when_store_is_not_secure(self):
++        m = mk(Fake())
++        self.assertTrue(m.migrate_legacy())
++        self.assertFalse(m.migrate_legacy())                        # idempotente
++        a = m._adapter("chatgpt")                                   # openai -> chatgpt
++        self.assertTrue(a.enabled())
++        self.assertEqual((a.cfg()["model"], a.cfg()["key"]), ("gpt-x", "sk-legacy-12345678"))
++        self.assertEqual(ai.load_file_config()["ai_api_key"], "sk-legacy-12345678")   # sin keyring seguro no se borra
++
++    def test_migration_moves_key_to_secure_store(self):
++        class Secure(KeyStore):
++            secure = property(lambda self: True)
++        m = mk(Fake(), ks=Secure("memory"))
++        self.assertTrue(m.migrate_legacy())
++        cfg = ai.load_file_config()
++        self.assertNotIn("ai_api_key", cfg)                         # fuera del archivo en claro
++        self.assertEqual(cfg["ai_model"], "gpt-x")                  # el resto de ajustes se conserva
++        self.assertEqual(m._adapter("chatgpt").cfg()["key"], "sk-legacy-12345678")
++
++
++class Integration(unittest.TestCase):
++    def tearDown(self):
++        set_manager(None)
++
++    def run_layer(self, fake):
++        m = mk(fake)
++        enable(m, *fake.b.keys())
++        set_manager(m)
++        w = ai.AIWorker()                                           # transporte por defecto: usa el gestor
++        layer = ai.AILayer(w)
++        r1 = layer.enrich(LIVE, result())
++        self.assertEqual(r1["ai"]["status"], "pendiente")
++        self.assertTrue(wait(lambda: w.rev >= 1))
++        return layer.enrich(LIVE, result()), m
++
++    def test_single_provider_attribution_in_result(self):
++        r, _ = self.run_layer(Fake(gratis='{"picks":[{"id":300,"score":80,"why":"pen"}]}'))
++        self.assertEqual(r["ai"]["status"], "ok")
++        self.assertEqual((r["ai"]["provider"], r["ai"]["providers"]), ("gratis", ["gratis"]))
++
++    def test_consensus_attribution_in_result(self):
++        r, m = self.run_layer(Fake(gratis='{"picks":[{"id":300,"score":80,"why":"a"}]}',
++                                   gemini='{"picks":[{"id":300,"score":60,"why":"b"},{"id":301,"score":70,"why":"c"}]}'))
++        self.assertEqual(r["ai"]["status"], "ok")
++        self.assertEqual((r["ai"]["provider"], r["ai"]["providers"], r["ai"]["strategy"]), ("consenso", ["gratis", "gemini"], "consensus"))
++
++    def test_failover_hides_nothing_when_all_fail_engine_continues(self):
++        r, _ = self.run_layer(Fake(gratis=ai.AIError("HTTP 500")))
++        self.assertEqual(r["ai"]["status"], "error")                # IA caída: el análisis base sigue y lo dice
++        self.assertIn("HTTP 500", r["ai"]["error"])
++        self.assertTrue(r["final_build"]["items"])
++
++    def test_legacy_single_provider_untouched_when_manager_empty(self):
++        set_manager(mk(Fake()))
++        self.assertIsNone(ai.active_config(None))
++        os.environ["BUNNYLOL_AI_PROVIDER"] = "grok"; os.environ["XAI_API_KEY"] = "k"
++        try:
++            cfg = ai.active_config(None)
++            self.assertNotIn("multi", cfg)
++            self.assertEqual(cfg["provider"], "grok")
++        finally:
++            os.environ.pop("BUNNYLOL_AI_PROVIDER"); os.environ.pop("XAI_API_KEY")
++
++    def test_manager_takes_precedence_over_legacy(self):
++        m = mk(Fake(gratis="x"))
++        enable(m, "gratis")
++        set_manager(m)
++        os.environ["BUNNYLOL_AI_PROVIDER"] = "grok"; os.environ["XAI_API_KEY"] = "k"
++        try:
++            self.assertTrue(ai.active_config(None)["multi"])
++        finally:
++            os.environ.pop("BUNNYLOL_AI_PROVIDER"); os.environ.pop("XAI_API_KEY")
++
++
++class Routes(unittest.TestCase):
++    def setUp(self):
++        self.m = mk(Fake(gratis='{"ok":true}'))
++        set_manager(self.m)
++        self.adv = types.SimpleNamespace(ai=ai.AILayer(ai.AIWorker(transport=lambda c, mm: "")), ai_status=lambda: {"x": 1})
++
++    def tearDown(self):
++        set_manager(None)
++
++    def test_get_and_post_providers(self):
++        code, out = ai_routes.handle(self.adv, "GET", "/api/ai/providers")
++        self.assertEqual((code, out["ok"], out["active"]), (200, True, []))
++        self.assertIn("keystore", out)
++        code, out = ai_routes.handle(self.adv, "POST", "/api/ai/providers", {"provider": "gratis", "enabled": True})
++        self.assertEqual((code, out["active"]), (200, ["gratis"]))
++        code, out = ai_routes.handle(self.adv, "POST", "/api/ai/providers", {"provider": "gemini", "enabled": True, "api_key": KEY})
++        self.assertNotIn(KEY, json.dumps(out))
++        code, out = ai_routes.handle(self.adv, "POST", "/api/ai/providers", {"strategy": {"full": "failover"}, "order": ["gemini"]})
++        self.assertEqual((out["strategy"]["full"], out["order"][0]), ("failover", "gemini"))
++
++    def test_unknown_provider_is_400_and_test_route(self):
++        code, out = ai_routes.handle(self.adv, "POST", "/api/ai/providers", {"provider": "nope"})
++        self.assertEqual(code, 400)
++        code, out = ai_routes.handle(self.adv, "POST", "/api/ai/providers/test", {"provider": "gratis"})
++        self.assertEqual((code, out["ok"]), (200, True))
++        code, out = ai_routes.handle(self.adv, "POST", "/api/ai/test", {"provider": "gratis"})
++        self.assertTrue(out["ok"])
++
++    def test_config_change_clears_worker_cache(self):
++        self.adv.ai.worker._cache["sig"] = {"x": 1}
++        ai_routes.handle(self.adv, "POST", "/api/ai/providers", {"provider": "gratis", "enabled": True})
++        self.assertEqual(len(self.adv.ai.worker._cache), 0)
++
++
++class Consensus(unittest.TestCase):
++    def test_avoid_needs_strict_majority_and_never_beats_strong_pick(self):
++        a = {"picks": [{"id": 300, "score": 90, "why": ""}], "avoid": [{"id": 301, "why": "x"}], "build": [], "resumen": "", "alert": ""}
++        b = {"picks": [], "avoid": [{"id": 301, "why": "y"}, {"id": 300, "why": "z"}], "build": [], "resumen": "", "alert": "ojo"}
++        merged, by = consensus.merge([("a", a), ("b", b)])
++        self.assertEqual([x["id"] for x in merged["avoid"]], [301])  # 300 la pide evitar 1 de 2: no es mayoría
++        self.assertEqual(merged["alert"], "ojo")
++
++    def test_never_invents_ids(self):
++        a = {"picks": [], "avoid": [], "build": [{"id": 300, "why": "a"}], "resumen": "", "alert": ""}
++        b = {"picks": [], "avoid": [], "build": [{"id": 302, "why": "b"}], "resumen": "", "alert": ""}
++        merged, _ = consensus.merge([("a", a), ("b", b)])
++        self.assertEqual({x["id"] for x in merged["build"]}, {300, 302})
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/ui/app.css b/ui/app.css
+index 9829e25..cd1b8dd 100644
+--- a/ui/app.css
++++ b/ui/app.css
+@@ -1312,3 +1312,11 @@ body.remote .lb{font-size:15px}body.remote .lb-it{width:48px;height:48px}
+ .ai-cfg select option{color:#000}
+ .ai-cfg-msg{padding:6px 8px;border-radius:8px;font-size:.88em}
+ .ai-cfg-msg.ok{border:1px solid #2f8f5b}.ai-cfg-msg.bad{border:1px solid #b5832e}
++.prov-box{display:grid;gap:8px;margin-top:6px}
++.prov-row{display:grid;gap:4px;padding:8px;border:1px solid var(--line,#2a3140);border-radius:10px}
++.prov-head{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
++.prov-box input[type=text],.prov-box input[type=password],.prov-box select{width:100%;box-sizing:border-box;border-radius:8px;padding:6px;background:transparent;color:inherit;border:1px solid var(--line,#2a3140)}
++.prov-box select option{color:#000}
++.prov-badge{font-size:.8em;padding:1px 8px;border-radius:999px;border:1px solid var(--line,#2a3140)}
++.prov-badge.ok{border-color:#2f8f5b}.prov-badge.degradado{border-color:#b5832e}.prov-badge.caido{border-color:#b5412e}
++
+diff --git a/ui/app.js b/ui/app.js
+index 8d5dfa6..4deee27 100644
+--- a/ui/app.js
++++ b/ui/app.js
+@@ -1677,6 +1677,7 @@ function muAiConfig(ai) {
+         : `<label>Clave API <input data-aicfg="key" type="password" autocomplete="off" value="${esc(c.key)}" placeholder="${c.hasKey ? "guardada " + esc(c.hint) + " (déjalo vacío para conservarla)" : "pega tu clave"}"></label>`}
+       <div class="ai-btns"><button type="button" data-aicfg-save ${c.busy ? "disabled" : ""}>${c.busy ? "Probando…" : "Guardar y probar"}</button></div>
+       ${c.msg ? `<div class="ai-cfg-msg ${c.ok ? "ok" : "bad"}">${esc(c.msg)}</div>` : ""}
++      ${muProvidersPanel()}
+     </div></details>`;
+ }
+ 
+@@ -1707,6 +1708,102 @@ async function muSaveAiCfg() {
+   if (state) render(state);
+ }
+ 
++/* ---- Gestor multi-IA: varios proveedores a la vez, su estado y la estrategia por modo ---- */
++mu.prov = mu.prov || { loaded: false, data: null, keys: {}, models: {}, msg: {}, busy: "" };
++const PROV_STATE = { sin_uso: "sin usar", ok: "OK", degradado: "con fallos", caido: "caído" };
++const PROV_STRAT = [["failover", "Principal + respaldo"], ["consensus", "Consenso (todos a la vez)"]];
++
++async function muLoadProviders(force) {
++  if (mu.prov.loaded && !force) return;
++  mu.prov.loaded = true;
++  try {
++    const r = await fetch("/api/ai/providers", { cache: "no-store" });
++    if (!r.ok) return;
++    mu.prov.data = await r.json();
++    if (state && !(mu.typingUntil > Date.now())) render(state);
++  } catch (e) { /* servidor sin el gestor: el panel simplemente no aparece */ }
++}
++
++async function muPostProviders(patch, id, test) {
++  mu.prov.busy = id || "*"; mu.typingUntil = 0;
++  if (state) render(state);
++  try {
++    const r = await fetch("/api/ai/providers", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
++    const out = await r.json();
++    if (!r.ok || out.ok === false) throw new Error(out.error || "http " + r.status);
++    mu.prov.data = out;
++    if (id) { mu.prov.keys[id] = ""; mu.prov.msg[id] = { ok: true, t: "Guardado" }; }
++    if (id && test) {
++      const t = await (await fetch("/api/ai/providers/test", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: id }) })).json();
++      mu.prov.msg[id] = t.ok ? { ok: true, t: `Conectado ✓ ${t.model} (${t.ms} ms)` } : { ok: false, t: "No conecta: " + (t.error || "error") };
++      await muLoadProviders(true);
++    }
++    muLiveTick(true);
++  } catch (e) {
++    if (id) mu.prov.msg[id] = { ok: false, t: e.message || "Sin conexión con el motor local." };
++  }
++  mu.prov.busy = ""; mu.typingUntil = 0;
++  if (state) render(state);
++}
++
++function muProvidersPanel() {
++  muLoadProviders();
++  const d = mu.prov.data;
++  if (!d || !d.providers) return "";
++  const st = d.strategy || {};
++  const sel = (lvl) => `<select data-prov-strategy="${lvl}">${PROV_STRAT.map(([v, n]) => `<option value="${v}" ${st[lvl] === v ? "selected" : ""}>${n}</option>`).join("")}</select>`;
++  const rows = d.providers.map((p) => {
++    const h = p.health || {};
++    const badge = !p.configured ? esc(p.reason || "sin configurar") : (PROV_STATE[h.state] || "");
++    const m = mu.prov.msg[p.id];
++    const keyField = p.needs_key || p.id === "custom"
++      ? `<input data-prov-key="${p.id}" type="password" autocomplete="off" value="${esc(mu.prov.keys[p.id] || "")}" placeholder="${p.has_key ? "clave guardada " + esc(p.key_hint) + " (vacío = conservar)" : "pega tu clave API"}">` : "";
++    return `<div class="prov-row">
++      <label class="prov-head"><input type="checkbox" data-prov-toggle="${p.id}" ${p.enabled ? "checked" : ""}> <b>${esc(p.label)}</b>
++        <span class="prov-badge ${esc(h.state || "")}">${badge}</span></label>
++      <small>${esc(p.note || "")}${h.last_error ? " · último error: " + esc(h.last_error) : ""}${h.avg_ms ? " · ~" + h.avg_ms + " ms" : ""}</small>
++      <input data-prov-model="${p.id}" type="text" value="${esc(mu.prov.models[p.id] !== undefined ? mu.prov.models[p.id] : p.model)}" placeholder="${esc(p.default_model || "modelo")}">
++      ${keyField}
++      <div class="ai-btns"><button type="button" data-prov-save="${p.id}" ${mu.prov.busy ? "disabled" : ""}>${mu.prov.busy === p.id ? "Probando…" : "Guardar y probar"}</button>
++        ${p.edge && p.edge.site ? `<small>Puente Edge (${esc(p.edge.site)}): etapa 3, aún no disponible</small>` : ""}</div>
++      ${m ? `<div class="ai-cfg-msg ${m.ok ? "ok" : "bad"}">${esc(m.t)}</div>` : ""}</div>`;
++  }).join("");
++  const ks = d.keystore || {};
++  return `<details data-keep="muprov" ${mu.provOpen ? "open" : ""}><summary>Varias IA a la vez (${(d.active || []).length} activas)</summary>
++    <div class="prov-box">
++      <label>Análisis rápido ${sel("fast")}</label>
++      <label>Análisis completo ${sel("full")}</label>
++      <small>Si un proveedor falla, se cae o responde algo inválido, la app pasa al siguiente y, si no queda ninguno, manda el motor matemático.</small>
++      ${rows}
++      <small>${ks.secure ? "Las claves se guardan en el Administrador de credenciales de Windows." : "Aviso: sin el módulo keyring las claves quedan en un archivo local de tu usuario. Instálalo con «pip install keyring»."}</small>
++    </div></details>`;
++}
++
++document.addEventListener("input", (e) => {
++  const k = e.target.closest && e.target.closest("[data-prov-key]");
++  if (k) { mu.prov.keys[k.dataset.provKey] = k.value; mu.typingUntil = Date.now() + 30000; }
++  const m = e.target.closest && e.target.closest("[data-prov-model]");
++  if (m) { mu.prov.models[m.dataset.provModel] = m.value; mu.typingUntil = Date.now() + 30000; }
++});
++document.addEventListener("change", (e) => {
++  const t = e.target.closest && e.target.closest("[data-prov-toggle]");
++  if (t) { muPostProviders({ provider: t.dataset.provToggle, enabled: t.checked }, t.dataset.provToggle, false); return; }
++  const s = e.target.closest && e.target.closest("[data-prov-strategy]");
++  if (s) muPostProviders({ strategy: { [s.dataset.provStrategy]: s.value } }, "", false);
++});
++document.addEventListener("click", (e) => {
++  const b = e.target.closest && e.target.closest("[data-prov-save]");
++  if (!b) return;
++  const id = b.dataset.provSave;
++  const patch = { provider: id };
++  if (mu.prov.keys[id]) patch.api_key = mu.prov.keys[id];
++  if (mu.prov.models[id] !== undefined) patch.model = mu.prov.models[id];
++  muPostProviders(patch, id, true);
++});
++document.addEventListener("toggle", (e) => {
++  if (e.target.matches && e.target.matches('details[data-keep="muprov"]')) mu.provOpen = e.target.open;
++}, true);
++
+ /* ---- IA externa (Grok u otra): puntúa solo candidatos del motor; el motor sigue mandando ---- */
+ function muAiBlock(ai) {
+   ai = ai || { status: "off" };
+-- 
+2.43.0
+

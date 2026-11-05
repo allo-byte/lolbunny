@@ -5,3 +5,16 @@ __pycache__/
 # Copias de seguridad manuales: no versionar
 backup_*/
 backup_original/
+
+# Secretos y datos privados
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+secrets.json
+credentials.json
+token.json
+webhook.txt
+data/webhook.txt

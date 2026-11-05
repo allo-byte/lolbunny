@@ -1,6 +1,7 @@
 import json
 import mimetypes
 import os
+import secrets
 import threading
 import time
 import traceback
@@ -61,11 +62,27 @@ MATCHUP_DEADLINE = 25.0       # s que espera una petición de /api/matchup antes
 _state_lock = threading.Lock()
 _state_last = None            # última respuesta buena de /api/state (para degradar sin perder la pantalla)
 
+_bridge_token = None          # token del puente iPad (generado al arrancar el servidor)
+_bridge_token_lock = threading.Lock()
+
 
 def _state_skeleton(msg):
     return {"status": "idle", "phase": None, "mock": False, "ready": False, "degraded": True, "backend_error": msg,
             "matchups": [], "tips": [], "situations": [], "rune_advice": [], "needs": [], "enemies": [], "allies": [],
             "items": {}, "stats": {}, "runes": {}, "spells": {}, "skills": {}, "settings": config.load_settings()}
+
+
+def _bridge_token_ensure():
+    """Genera (una sola vez) y devuelve el token secreto del puente iPad.
+
+    Solo se entrega por /api/bridge/token a peticiones locales; nunca se expone
+    a clientes remotos ni se registra en logs.
+    """
+    global _bridge_token
+    with _bridge_token_lock:
+        if _bridge_token is None:
+            _bridge_token = secrets.token_urlsafe(32)
+        return _bridge_token
 
 
 def _state_response(ip="?"):
@@ -302,6 +319,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/journal":
             self._send(200, {"entries": journal.list_entries(100)})
+            return
+        if path == "/api/bridge/token":
+            # Token del puente: solo desde el PC local, nunca desde la red ni vía puente remoto.
+            if not self._require_local():
+                self._send(403, {"ok": False, "error": "El token del puente solo se entrega desde este PC."})
+                return
+            self._send(200, {"token": _bridge_token_ensure()})
             return
         if path.startswith("/icon/"):
             self._serve_icon(path)

@@ -17,6 +17,7 @@ Robustez (para que un iPad que duerme o pierde el wifi no deje el puente colgado
 Este archivo es independiente: no importa nada del proyecto (también se ejecuta desde herramientas/).
 """
 import json
+import hmac
 import logging
 import os
 import socket
@@ -29,36 +30,13 @@ from logging.handlers import RotatingFileHandler
 
 IDLE_TIMEOUT = 90.0        # s sin datos en NINGUNA dirección: se cierra (entre IDLE y 2*IDLE; el servidor de la app corta a los 30 s)
 CONNECT_TIMEOUT = 1.5      # s para conectar con la app: está en este mismo PC (127.0.0.1), así que conecta en milisegundos.
-                           # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
-                           # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
+                            # No bajar de ~1.3: una app viva pero saturada puede tardar ~1 s (reenvío de SYN) y no es "caída".
+                            # No subir de ~1.9: con la app caída, Windows tarda ~2 s en rechazar y el iPad esperaría todo ese tiempo.
 MAX_CONNECTIONS = 200
 RELAY_SOURCE = "127.0.0.2"  # origen con el que el puente habla con la app (ver _connect_app)
 CLOSE_DRAIN = 0.25         # s como máximo para leer y descartar lo que el cliente ya envió antes de cerrarle (ver close_gracefully)
 SUMMARY_EVERY = 600.0      # s entre resúmenes en el log
 TOKEN_FETCH_TIMEOUT = 5.0  # s para obtener el token del servidor al inicio
-
-
-def _log_path():
-    root = os.path.dirname(os.path.abspath(__file__))
-    if os.path.basename(root).lower() == "herramientas":
-        root = os.path.dirname(root)
-    return os.environ.get("BUNNYLOL_BRIDGE_LOG") or os.path.join(root, "cache", "ipad_bridge.log")
-
-
-def make_logger(path=None):
-    lg = logging.getLogger("bunnylol.bridge.%s" % (path or "default"))
-    lg.setLevel(logging.INFO)
-    lg.propagate = False
-    if not lg.handlers:
-        try:
-            p = path or _log_path()
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            h = RotatingFileHandler(p, maxBytes=512 * 1024, backupCount=2, encoding="utf-8", delay=True)
-            h.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
-            lg.addHandler(h)
-        except Exception:
-            lg.addHandler(logging.NullHandler())
-    return lg
 
 
 def _log_path():
@@ -95,7 +73,7 @@ def ip_local():
         s.close()
 
 
-def tune(sock, idle=90.0):
+def tune(sock, idle=IDLE_TIMEOUT):
     """Keepalive TCP + sin Nagle + límite de inactividad. Cada ajuste es opcional según el sistema."""
     for fn in (
         lambda: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
@@ -152,7 +130,7 @@ class Bridge:
                  max_conn=200, logger=None, connect_timeout=1.5, bridge_token=None):
         self.port_app, self.port_bridge, self.host = port_app, port_bridge, host
         self.idle, self.max_conn, self.connect_timeout = idle, max_conn, connect_timeout
-        self.bridge_token = bridge_token or self._get_bridge_token(port_app)
+        self.bridge_token = bridge_token
         self.log = make_logger()
         self.stats = {"accepted": 0, "app_unreachable": 0, "rejected": 0, "idle_closed": 0, "accept_errors": 0,
                       "rebinds": 0, "active": 0}
@@ -170,7 +148,7 @@ class Bridge:
         if token:
             return token
         try:
-            url = f"http://127.0.0.1:{port_app}/api/bridge/token"
+            url = "http://127.0.0.1:%d/api/bridge/token" % port_app
             req = urllib.request.Request(url, method="GET")
             with urllib.request.urlopen(req, timeout=5.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -239,18 +217,6 @@ class Bridge:
             self._warn("origen", "no se pudo usar %s como origen: la app verá al iPad como local" % RELAY_SOURCE, every=3600.0)
         return s
 
-    def _dial(self, source, timeout):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            if source:
-                s.bind((source, 0))
-            s.settimeout(timeout)
-            s.connect(("127.0.0.1", self.port_app))
-            return s
-        except BaseException:
-            s.close()
-            raise
-
     # ---- reenvío
     def _copy(self, src, dst, done, act=None):
         """Copia src -> dst. `act` ([timestamp]) es compartido por los dos sentidos de la conexión:
@@ -296,6 +262,50 @@ class Bridge:
             self._warn("limite", "demasiadas conexiones (%d): se rechaza %s" % (self.max_conn, addr[0]))
             close_gracefully(client)         # cierre limpio: el rechazo no cuenta como conexión activa
             return
+
+        # Aplicar límite de inactividad al cliente desde el primer instante: una conexión que
+        # no envíe el token de autenticación no puede quedarse colgada para siempre.
+        tune(client, self.idle)
+
+        # Leer y validar header X-Bridge-Token antes de permitir tráfico por el puente.
+        # El token es OBLIGATORIO siempre: nunca se permite acceso sin autenticación.
+        if not self.bridge_token:
+            # Puente sin token configurado: no se admite ninguna conexión.
+            client.close()
+            self._bump("active", -1)
+            return
+        remaining = b""
+        try:
+            token_line = b""
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    client.close()
+                    self._bump("active", -1)
+                    return
+                token_line += chunk
+                if b"\r\n" in token_line:
+                    break
+            if not token_line.startswith(b"X-Bridge-Token: "):
+                client.close()
+                self._bump("active", -1)
+                return
+            token = token_line[len(b"X-Bridge-Token: "):].split(b"\r\n")[0].decode("ascii", errors="ignore")
+            if not hmac.compare_digest(token, self.bridge_token):
+                # Comparación en tiempo constante; nunca se registra el valor del token.
+                client.close()
+                self._bump("active", -1)
+                return
+
+            # Leer cualquier dato restante después del header del token
+            token_end = token_line.find(b"\r\n")
+            if token_end >= 0:
+                remaining = token_line[token_end + 2:]
+        except OSError:
+            client.close()
+            self._bump("active", -1)
+            return
+
         app = None
         try:
             try:
@@ -310,14 +320,26 @@ class Bridge:
             if self._app_down_since is not None:
                 self.log.info("[app_recuperada] la app vuelve a responder tras %d s", time.time() - self._app_down_since)
                 self._app_down_since = None
+
             tune(client, self.idle)
             tune(app, self.idle)
+
+            # Si hay datos restantes después del token, reenviarlos primero
+            if remaining:
+                try:
+                    app.sendall(remaining)
+                except OSError:
+                    client.close()
+                    return
+
+            # Proxy transparente bidireccional
             done = threading.Event()
             act = [time.time()]                    # último dato en cualquiera de los dos sentidos
             t = threading.Thread(target=self._copy, args=(app, client, done, act), daemon=True)
             t.start()
             self._copy(client, app, done, act)     # esta conexión usa el hilo actual; la otra dirección, t
             t.join(timeout=self.idle + 5)
+
         except Exception as e:
             self._warn("conexion", "error inesperado con %s: %r" % (addr[0], e))
         finally:
@@ -397,17 +419,17 @@ def main(argv=None):
     try:
         br = Bridge(port_app, port_bridge, bridge_token=bridge_token).start()
     except OSError as e:
-        print(f"No se pudo abrir el puerto {port_bridge}: {e}. ¿Ya hay otro puente abierto?")
+        print("No se pudo abrir el puerto %d: %s. ¿Ya hay otro puente abierto?" % (port_bridge, e))
         return 1
     ip = ip_local()
     print("=" * 52)
     print("  Puente iPad activo")
-    print(f"  En el iPad (misma Wi-Fi) abre:")
-    print(f"    http://{ip}:{port_bridge}/overlay")
-    print(f"    http://{ip}:{port_bridge}/   (analizador)")
+    print("  En el iPad (misma Wi-Fi) abre:")
+    print("    http://%s:%d/overlay" % (ip, port_bridge))
+    print("    http://%s:%d/   (analizador)" % (ip, port_bridge))
     print("  Si la IP cambia al reiniciar el router, prueba con el nombre:")
-    print(f"    http://{socket.gethostname()}.local:{port_bridge}/overlay")
-    print(f"  Registro de fallos: {_log_path()}")
+    print("    http://%s.local:%d/overlay" % (socket.gethostname(), port_bridge))
+    print("  Registro de fallos: %s" % _log_path())
     print("  Ctrl+C para cerrar")
     print("=" * 52)
     try:
